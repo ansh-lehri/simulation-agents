@@ -1,0 +1,13 @@
+version: "2"
+
+# Minimal configuration. Default linter set applies to production code
+# unchanged; test files are exempted from errcheck because they routinely
+# `defer x.Close()` on short-lived resources where the Close error is
+# intentionally ignored and wrapping every defer in an explicit discard
+# adds noise without catching real bugs.
+linters:
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
