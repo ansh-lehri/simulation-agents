@@ -11,6 +11,7 @@ import (
 
 	"simulation-agents/connectivity/config"
 	"simulation-agents/connectivity/db"
+	"simulation-agents/core"
 	"simulation-agents/transport"
 )
 
@@ -48,6 +49,11 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("agentsd: load connectivity config: %w", err)
 	}
 
+	coreClientConfig, err := loadCoreClientConfig()
+	if err != nil {
+		return err
+	}
+
 	rootCtx, stopSignalWatch := signal.NotifyContext(
 		context.Background(), syscall.SIGINT, syscall.SIGTERM,
 	)
@@ -68,6 +74,12 @@ func run(logger *slog.Logger) error {
 			logger.Warn("agentsd: redis client close returned error", "error", closeErr)
 		}
 	}()
+
+	coreClient, err := core.NewClient(coreClientConfig, logger)
+	if err != nil {
+		return fmt.Errorf("agentsd: build core client: %w", err)
+	}
+	defer coreClient.Close()
 
 	placeholderOrchestrator := transport.NewPlaceholderOrchestrator(logger)
 	server := transport.New(listenAddr, placeholderOrchestrator, logger)
