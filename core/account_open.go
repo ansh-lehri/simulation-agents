@@ -41,9 +41,9 @@ type openAccountResponseEnvelope struct {
 //
 // The underlying Core endpoint is get-or-create keyed on agentUserID,
 // so a repeated call with the same user id is safe and returns the
-// same handle. That property is why OpenAccount is classed as
-// idempotent and will be eligible for the retry wrapper once it lands;
-// in this stage the call is single-shot and surfaces 5xx directly.
+// same handle. That property is why OpenAccount runs through the
+// idempotent-retry path: a 5xx or a transport blip can be retried
+// without risking a duplicate account.
 //
 // Classed as a pre-open call: it runs during the bring-up spine, well
 // before trading begins, and tolerates the slack configured in
@@ -56,7 +56,7 @@ func (client *Client) OpenAccount(ctx context.Context, agentUserID string) (stri
 		User: openAccountRequestUser{UserID: agentUserID, Email: ""},
 	}
 	var responseBody openAccountResponseEnvelope
-	if err := client.executeJSONCall(
+	if err := client.executeIdempotentJSONCall(
 		ctx,
 		preOpenCall,
 		http.MethodPost,

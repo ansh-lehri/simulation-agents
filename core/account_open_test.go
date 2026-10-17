@@ -140,24 +140,28 @@ func TestOpenAccountSurfacesCallErrorOn5xx(t *testing.T) {
 	}
 }
 
-func TestOpenAccountDoesNotRetryYet(t *testing.T) {
+func TestOpenAccountDoesNotRetryBusinessReject(t *testing.T) {
 	t.Parallel()
-	// Stage 2 has no retry wrapper yet: a 5xx should hit the server
-	// exactly once. The retry wrapper lands in the next stage and
-	// will update this test's expectation to a retried-and-succeeded
-	// scenario at that point.
+	// A 4xx carries a stable business reject that will reproduce on
+	// the next attempt verbatim, so retrying wastes a round trip.
+	// Exactly one server hit is expected even when retries are
+	// configured.
 	var serverHits atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
 		serverHits.Add(1)
-		responseWriter.WriteHeader(http.StatusServiceUnavailable)
+		responseWriter.Header().Set("Content-Type", "application/json")
+		responseWriter.WriteHeader(http.StatusConflict)
+		_, _ = responseWriter.Write([]byte(`{"reason":"something_specific"}`))
 	}))
 	t.Cleanup(server.Close)
 
-	client := newTestClient(t, server)
-	_, _ = client.OpenAccount(context.Background(), "agent-7")
-
+	client := newTestClientWithRetryPolicy(t, server, 3, 1*time.Millisecond)
+	_, err := client.OpenAccount(context.Background(), "agent-7")
+	if err == nil {
+		t.Fatalf("expected error on 409")
+	}
 	if serverHits.Load() != 1 {
-		t.Fatalf("expected exactly 1 server hit in stage 2 (no retry), got %d", serverHits.Load())
+		t.Fatalf("expected exactly 1 hit on 4xx (no retry), got %d", serverHits.Load())
 	}
 }
 

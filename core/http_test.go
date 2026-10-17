@@ -13,21 +13,32 @@ import (
 )
 
 // newTestClient builds a Client whose BaseURL points at the given test
-// server. Timeouts are deliberately short so a mis-wired test fails
-// fast rather than hanging. The WebSocket base URL is a placeholder
-// (unused in Stage 2) that only has to pass Validate.
+// server. Retries are disabled on the baseline helper so tests that do
+// not care about retry behavior get single-shot semantics. The
+// WebSocket base URL is a placeholder (unused by HTTP tests) that
+// only has to pass Validate.
 func newTestClient(t *testing.T, server *httptest.Server) *Client {
+	t.Helper()
+	return newTestClientWithRetryPolicy(t, server, 0, 0)
+}
+
+// newTestClientWithRetryPolicy builds a Client with a specific retry
+// cap and backoff, used by tests that exercise the idempotent-retry
+// path.
+func newTestClientWithRetryPolicy(
+	t *testing.T, server *httptest.Server, maxIdempotentRetries int, idempotentRetryBackoff time.Duration,
+) *Client {
 	t.Helper()
 	config := ClientConfig{
 		BaseURL:                server.URL,
 		WebSocketBaseURL:       "ws://127.0.0.1:1",
 		Timeouts:               validTestTimeouts(),
-		MaxIdempotentRetries:   0,
-		IdempotentRetryBackoff: 0,
+		MaxIdempotentRetries:   maxIdempotentRetries,
+		IdempotentRetryBackoff: idempotentRetryBackoff,
 	}
 	client, err := NewClient(config, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
-		t.Fatalf("newTestClient: %v", err)
+		t.Fatalf("newTestClientWithRetryPolicy: %v", err)
 	}
 	t.Cleanup(client.Close)
 	return client
