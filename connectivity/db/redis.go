@@ -33,7 +33,7 @@ func NewRedis(ctx context.Context, redisCfg config.RedisConfig) (*redis.Client, 
 	defer cancel()
 
 	if pingErr := client.Ping(pingCtx).Err(); pingErr != nil {
-		client.Close()
+		_ = client.Close()
 		return nil, fmt.Errorf("connectivity/db: redis: ping failed (addr=%s db=%d timeout=%s): %w",
 			opts.Addr, opts.DB, redisCfg.PingTimeout, pingErr)
 	}
