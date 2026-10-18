@@ -19,7 +19,7 @@ type TraitVector struct {
 	// Universal (present on both kinds).
 	Skill          float64 `json:"skill"`           // in [0,1]
 	Aggressiveness float64 `json:"aggressiveness"`  // in [0,1]
-	CapitalSize    int64   `json:"capital_size"`    // frozen scale (whale ↔ minnow); session money lives on Agent.TradingCapital, not here
+	CapitalSize    int64   `json:"capital_size"`    // int64 because every money-shaped value in this system is integer coins; CapitalSize is money-shaped scale, not a ratio. frozen scale (whale ↔ minnow); session money lives on Agent.TradingCapital, not here
 	PnlReactivity  float64 `json:"pnl_reactivity"`  // in [0,1]
 	PAct           float64 `json:"p_act"`           // per-tick act probability in [0,1]
 
