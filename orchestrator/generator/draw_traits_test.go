@@ -63,14 +63,10 @@ func TestDrawTraitVectorKindFirstGating(t *testing.T) {
 			}
 			if traits.Disposition == nil || traits.Diet == nil ||
 				traits.Rho == nil || traits.Phi == nil ||
+				traits.Perception == nil ||
 				traits.Exit == nil || traits.MaxHold == nil {
 				t.Fatalf("endogenous agent missing an endogenous field (seed %d): %+v",
 					seedCounter, traits)
-			}
-			// Perception block is intentionally nil at this build stage.
-			if traits.Perception != nil {
-				t.Fatalf("perception block present before its draw stage (seed %d)",
-					seedCounter)
 			}
 		default:
 			t.Fatalf("unknown agent kind %q (seed %d)", traits.AgentKind, seedCounter)
