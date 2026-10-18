@@ -128,17 +128,17 @@ func TestDrawMaxHoldStaysInBox(t *testing.T) {
 	}
 }
 
-// TestSortedKeysIsDeterministic covers the small helper that neutralises
-// Go's randomized map iteration. Called many times on the same map and
-// always returns the same slice.
-func TestSortedKeysIsDeterministic(t *testing.T) {
+// TestSortedStringKeysIsDeterministic covers the small helper that
+// neutralises Go's randomized map iteration. Called many times on the
+// same map and always returns the same sorted slice.
+func TestSortedStringKeysIsDeterministic(t *testing.T) {
 	mapping := map[string]float64{"beta": 1, "alpha": 2, "gamma": 3}
-	first := sortedKeys(mapping)
+	first := sortedStringKeys(mapping)
 	for i := 0; i < 50; i++ {
-		next := sortedKeys(mapping)
+		next := sortedStringKeys(mapping)
 		for index := range first {
 			if first[index] != next[index] {
-				t.Fatalf("sortedKeys drifted at index %d: first=%q next=%q",
+				t.Fatalf("sortedStringKeys drifted at index %d: first=%q next=%q",
 					index, first[index], next[index])
 			}
 		}
@@ -146,7 +146,7 @@ func TestSortedKeysIsDeterministic(t *testing.T) {
 	// Also assert it is actually sorted.
 	for index := 1; index < len(first); index++ {
 		if first[index-1] > first[index] {
-			t.Fatalf("sortedKeys output not sorted: %v", first)
+			t.Fatalf("sortedStringKeys output not sorted: %v", first)
 		}
 	}
 }
