@@ -13,6 +13,7 @@ import (
 // schema_migrations.
 func TestApply_CreatesAgentsTableAndPartialIndex(t *testing.T) {
 	pool := openTestDB(t)
+	resetSchema(t, pool)
 	ctx := context.Background()
 
 	if err := store.Apply(ctx, pool); err != nil {
@@ -61,6 +62,7 @@ func TestApply_CreatesAgentsTableAndPartialIndex(t *testing.T) {
 // and must not duplicate the version row.
 func TestApply_IsIdempotent(t *testing.T) {
 	pool := openTestDB(t)
+	resetSchema(t, pool)
 	ctx := context.Background()
 
 	if err := store.Apply(ctx, pool); err != nil {
