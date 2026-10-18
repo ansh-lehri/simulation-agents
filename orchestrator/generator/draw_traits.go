@@ -61,8 +61,9 @@ func drawTraitVector(rng *rand.Rand, params GenParams, scenarioShifts *Effective
 	optimism := drawOptimism(rng, params.OptimismBeta, bimodalShift(scenarioShifts))
 	traits.Phi = &optimism
 
-	// Perception block lands in the next stage of the trait-draw build.
-	// Kept nil here so the shape is final from stage one.
+	perceptionProfile := drawPerceptionProfile(rng, traits.Skill, reactivity, optimism, diet, params)
+	perceptionProfile.ChannelWeights = drawChannelWeights(rng, params)
+	traits.Perception = &perceptionProfile
 
 	exitProfile := drawExitProfile(rng, params, traits.Skill)
 	traits.Exit = &exitProfile
