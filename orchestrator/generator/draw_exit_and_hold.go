@@ -3,7 +3,6 @@ package generator
 import (
 	"math"
 	"math/rand/v2"
-	"sort"
 
 	"simulation-agents/agent"
 )
@@ -50,7 +49,7 @@ func drawExitMode(rng *rand.Rand, anchors map[string]float64, tau, skill float64
 	if len(anchors) == 0 {
 		return ""
 	}
-	sortedModeNames := sortedKeys(anchors)
+	sortedModeNames := sortedStringKeys(anchors)
 
 	scores := make([]float64, len(sortedModeNames))
 	totalScore := 0.0
@@ -86,17 +85,4 @@ func drawMaxHold(rng *rand.Rand, intRange IntRange, reactivity, jitterFraction f
 	centered := centerFromReactivity(rng, float64(intRange.Low), float64(intRange.High), reactivity, jitterFraction)
 	rounded := int(math.Round(centered))
 	return clampInt(rounded, intRange.Low, intRange.High)
-}
-
-// sortedKeys returns the keys of a map[string]float64 in sorted order.
-// Used wherever a deterministic iteration is required and Go's native
-// map iteration (randomized by design) would silently break
-// reproducibility.
-func sortedKeys(mapping map[string]float64) []string {
-	keys := make([]string, 0, len(mapping))
-	for key := range mapping {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
