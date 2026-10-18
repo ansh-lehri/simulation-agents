@@ -4,42 +4,72 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 
 	"simulation-agents/orchestrator/generator"
 	"simulation-agents/transport"
 )
+
+// PopulationGenerator is the orchestrator's view of the trait-draw
+// engine. Defined as an interface so tests can inject a fake generator
+// and so the orchestrator's dependency surface is spelled out at the
+// point of use. The real *generator.Generator satisfies this
+// structurally; the compile-time witness in handle_bringup_test.go
+// catches signature drift at build time.
+type PopulationGenerator interface {
+	GenerateCanonical(
+		ctx context.Context,
+		country string,
+		populationSize int,
+		rng *rand.Rand,
+		exchangeID string,
+	) (generator.Population, error)
+
+	GenerateOnDemand(
+		ctx context.Context,
+		country string,
+		exchangeID string,
+		populationSize int,
+		rng *rand.Rand,
+		scenarioName string,
+	) (generator.Population, error)
+}
 
 // Orchestrator is the actor that runs the bring-up spine: receive the
 // inbound trigger, assemble a Population through the generator, open
 // broker accounts for the newly minted agents, resolve each agent's
 // session trading capital, and hand off to the asynchronous tail that
 // persists, snapshots, and spawns the per-exchange run goroutine.
-//
-// This file wires the construction and the inbound-seam surface; the
-// account-open and capital-resolver dependencies land as the next
-// implementation step, and the bring-up spine wires them together after
-// that. For now BringUp validates the request, logs the acceptance, and
-// returns the stub ack transport callers already observe. WindDown is
-// also a logged stub; the real teardown path is a later phase.
 type Orchestrator struct {
-	generator *generator.Generator
-	rngSource RNGSource
-	config    OrchestratorConfig
-	logger    *slog.Logger
+	generator   PopulationGenerator
+	accountOpen *AccountOpenClient
+	capital     *CapitalResolver
+	rngSource   RNGSource
+	config      OrchestratorConfig
+	logger      *slog.Logger
 }
 
 // NewOrchestrator wires an Orchestrator from its dependencies and
 // validates the config. Every dependency is required: a nil generator,
-// rng source, or logger would make the first bring-up panic deep in a
-// call site that is harder to debug than a clear startup error.
+// account-open client, capital resolver, rng source, or logger would
+// make the first bring-up panic deep in a call site that is harder to
+// debug than a clear startup error.
 func NewOrchestrator(
-	populationGenerator *generator.Generator,
+	populationGenerator PopulationGenerator,
+	accountOpenClient *AccountOpenClient,
+	capitalResolver *CapitalResolver,
 	rngSource RNGSource,
 	config OrchestratorConfig,
 	logger *slog.Logger,
 ) (*Orchestrator, error) {
 	if populationGenerator == nil {
 		return nil, fmt.Errorf("orchestrator: generator is required")
+	}
+	if accountOpenClient == nil {
+		return nil, fmt.Errorf("orchestrator: accountOpenClient is required")
+	}
+	if capitalResolver == nil {
+		return nil, fmt.Errorf("orchestrator: capitalResolver is required")
 	}
 	if rngSource == nil {
 		return nil, fmt.Errorf("orchestrator: rngSource is required")
@@ -51,10 +81,12 @@ func NewOrchestrator(
 		return nil, fmt.Errorf("orchestrator: invalid config: %w", err)
 	}
 	return &Orchestrator{
-		generator: populationGenerator,
-		rngSource: rngSource,
-		config:    config,
-		logger:    logger,
+		generator:   populationGenerator,
+		accountOpen: accountOpenClient,
+		capital:     capitalResolver,
+		rngSource:   rngSource,
+		config:      config,
+		logger:      logger,
 	}, nil
 }
 
@@ -62,14 +94,17 @@ func NewOrchestrator(
 // matches transport.AgentOrchestrator so the real orchestrator slots in
 // behind the server with no caller change.
 //
-// At this implementation step, BringUp validates the request, logs the
-// acceptance, and returns the accounts-ready ack. The three-stage spine
-// (assemble identities, open accounts, resolve capital) is wired as the
-// next step; the asynchronous persist-snapshot-spawn tail is a later
-// phase. Until the spine lands, a BringUp acknowledges and returns
-// without producing any downstream side effects.
-func (orchestrator *Orchestrator) BringUp(ctx context.Context, request transport.BringUpRequest) (transport.BringUpAck, error) {
-	_ = ctx
+// Flow: validate the trigger, warn on carried-but-unused fields, draw a
+// fresh RNG from the configured source, run the three-stage synchronous
+// spine (assemble identities, open broker accounts, resolve capital),
+// and spawn the asynchronous tail that persists / snapshots / spawns
+// the per-exchange run goroutine. The ack returns once the spine
+// completes; the tail runs under a background-rooted context so it is
+// not cancelled when the inbound caller is unblocked.
+func (orchestrator *Orchestrator) BringUp(
+	ctx context.Context,
+	request transport.BringUpRequest,
+) (transport.BringUpAck, error) {
 	if err := validateTrigger(request); err != nil {
 		return transport.BringUpAck{}, err
 	}
@@ -84,19 +119,100 @@ func (orchestrator *Orchestrator) BringUp(ctx context.Context, request transport
 		)
 	}
 	orchestrator.logger.Info(
-		"bring-up accepted",
+		"bring-up spine start",
 		"exchange_id", request.ExchangeID,
 		"session_type", request.SessionType,
 		"country", request.Country,
 		"instrument_count", len(request.Instruments),
 		"scenario", request.Scenario,
 	)
-	// Spine wires in the next step. Current acceptance is a no-op; the
-	// returned ack still matches the transport contract.
+
+	freshRNG := orchestrator.rngSource.Fresh()
+	population, err := orchestrator.runBringUpSpine(ctx, request, freshRNG)
+	if err != nil {
+		orchestrator.logger.Error(
+			"bring-up spine failed",
+			"exchange_id", request.ExchangeID,
+			"error", err,
+		)
+		return transport.BringUpAck{}, err
+	}
+
+	// Detach the tail from the request's context. The caller is unblocked
+	// once the ack returns, and the transport layer may cancel the
+	// request context immediately after; the tail must survive that.
+	go orchestrator.continueBringUp(context.Background(), request, population)
+
+	orchestrator.logger.Info(
+		"bring-up spine complete, accounts ready",
+		"exchange_id", request.ExchangeID,
+		"existing_count", len(population.Existing),
+		"new_count", len(population.New),
+	)
 	return transport.BringUpAck{
 		ExchangeID: request.ExchangeID,
 		Status:     transport.StatusAccountsReady,
 	}, nil
+}
+
+// runBringUpSpine runs the three-stage synchronous spine over one
+// Population. The order is forced by data dependency: Stage A produces
+// identities, Stage B needs identities to open broker accounts and
+// yields FundedCash, Stage C needs FundedCash to bound the new agents'
+// trading capital draw. Each stage wraps its error with its own name so
+// a bring-up failure surfaces which stage failed without having to
+// reason about the call stack.
+func (orchestrator *Orchestrator) runBringUpSpine(
+	ctx context.Context,
+	request transport.BringUpRequest,
+	rng *rand.Rand,
+) (generator.Population, error) {
+	var population generator.Population
+	var generationErr error
+
+	// Stage A — assemble identities.
+	switch request.SessionType {
+	case SessionTypeCanonical:
+		population, generationErr = orchestrator.generator.GenerateCanonical(
+			ctx,
+			request.Country,
+			orchestrator.config.PopulationSize,
+			rng,
+			request.ExchangeID,
+		)
+	case SessionTypeOnDemand:
+		population, generationErr = orchestrator.generator.GenerateOnDemand(
+			ctx,
+			request.Country,
+			request.ExchangeID,
+			orchestrator.config.PopulationSize,
+			rng,
+			request.Scenario,
+		)
+	default:
+		// Unreachable: validateTrigger has already rejected any other
+		// session type. Returning an explicit error here beats a silent
+		// zero population in the event validateTrigger is ever
+		// weakened.
+		return generator.Population{}, fmt.Errorf(
+			"orchestrator: unexpected session type %q reached the spine",
+			request.SessionType,
+		)
+	}
+	if generationErr != nil {
+		return generator.Population{}, fmt.Errorf("stage A (generation): %w", generationErr)
+	}
+
+	// Stage B — bulk account-open for the new agents.
+	if err := orchestrator.accountOpen.Open(ctx, population.New); err != nil {
+		return generator.Population{}, fmt.Errorf("stage B (account open): %w", err)
+	}
+
+	// Stage C — resolve session trading capital under the three-case
+	// dispatch. Pure in-memory step, cannot fail.
+	orchestrator.capital.Resolve(&population, request.SessionType, rng)
+
+	return population, nil
 }
 
 // WindDown is the inbound teardown seam, matching
@@ -112,3 +228,8 @@ func (orchestrator *Orchestrator) WindDown(ctx context.Context, exchangeID strin
 	)
 	return nil
 }
+
+// Compile-time witness: the real generator satisfies the orchestrator's
+// view of it. Signature drift would fail at build rather than at first
+// bring-up.
+var _ PopulationGenerator = (*generator.Generator)(nil)

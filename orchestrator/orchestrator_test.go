@@ -192,21 +192,37 @@ func TestNewOrchestratorRejectsNilDependencies(t *testing.T) {
 	rngSource := NewFixedSeedSource(1, 2)
 	config := completeOrchestratorConfig()
 	logger := discardLogger()
+	accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), logger)
+	if err != nil {
+		t.Fatalf("NewAccountOpenClient: %v", err)
+	}
+	capital, err := NewCapitalResolver(agent.CapitalParams{DefaultFundedCash: 1}, logger)
+	if err != nil {
+		t.Fatalf("NewCapitalResolver: %v", err)
+	}
 
 	cases := []struct {
 		name string
 		call func() error
 	}{
 		{"nil generator", func() error {
-			_, err := NewOrchestrator(nil, rngSource, config, logger)
+			_, err := NewOrchestrator(nil, accountOpen, capital, rngSource, config, logger)
+			return err
+		}},
+		{"nil accountOpen", func() error {
+			_, err := NewOrchestrator(testGenerator, nil, capital, rngSource, config, logger)
+			return err
+		}},
+		{"nil capital", func() error {
+			_, err := NewOrchestrator(testGenerator, accountOpen, nil, rngSource, config, logger)
 			return err
 		}},
 		{"nil rngSource", func() error {
-			_, err := NewOrchestrator(testGenerator, nil, config, logger)
+			_, err := NewOrchestrator(testGenerator, accountOpen, capital, nil, config, logger)
 			return err
 		}},
 		{"nil logger", func() error {
-			_, err := NewOrchestrator(testGenerator, rngSource, config, nil)
+			_, err := NewOrchestrator(testGenerator, accountOpen, capital, rngSource, config, nil)
 			return err
 		}},
 	}
@@ -221,9 +237,22 @@ func TestNewOrchestratorRejectsNilDependencies(t *testing.T) {
 }
 
 func TestNewOrchestratorRejectsInvalidConfig(t *testing.T) {
+	logger := discardLogger()
+	accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), logger)
+	if err != nil {
+		t.Fatalf("NewAccountOpenClient: %v", err)
+	}
+	capital, err := NewCapitalResolver(agent.CapitalParams{DefaultFundedCash: 1}, logger)
+	if err != nil {
+		t.Fatalf("NewCapitalResolver: %v", err)
+	}
+
 	bad := completeOrchestratorConfig()
 	bad.PopulationSize = 0
-	_, err := NewOrchestrator(buildTestGenerator(t), NewFixedSeedSource(1, 2), bad, discardLogger())
+	_, err = NewOrchestrator(
+		buildTestGenerator(t), accountOpen, capital,
+		NewFixedSeedSource(1, 2), bad, logger,
+	)
 	if err == nil || !strings.Contains(err.Error(), "PopulationSize") {
 		t.Fatalf("expected PopulationSize error, got %v", err)
 	}
@@ -316,10 +345,31 @@ func TestWindDownReturnsNil(t *testing.T) {
 
 func mustBuildOrchestrator(t *testing.T, logger *slog.Logger) *Orchestrator {
 	t.Helper()
+	accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), logger)
+	if err != nil {
+		t.Fatalf("NewAccountOpenClient: %v", err)
+	}
+	capital, err := NewCapitalResolver(agent.CapitalParams{
+		Floor:             1,
+		JitterSpread:      0,
+		DefaultFundedCash: 100_000,
+	}, logger)
+	if err != nil {
+		t.Fatalf("NewCapitalResolver: %v", err)
+	}
+	// A tiny PopulationSize keeps the skeleton tests fast — they drive a
+	// full spine run including the per-agent OpenAccount loop. The spine
+	// behaviours themselves are exercised in handle_bringup_test.go,
+	// where the fake generator makes the loop count explicit.
+	config := completeOrchestratorConfig()
+	config.PopulationSize = 3
+
 	orchestrator, err := NewOrchestrator(
 		buildTestGenerator(t),
+		accountOpen,
+		capital,
 		NewFixedSeedSource(42, 7),
-		completeOrchestratorConfig(),
+		config,
 		logger,
 	)
 	if err != nil {
