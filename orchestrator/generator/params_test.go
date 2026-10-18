@@ -32,23 +32,59 @@ func completeGenParams() GenParams {
 			"chart.ma":        {ReactivityAnchor: 0.2, SkillDemand: 0},
 			"chart.rsi":       {ReactivityAnchor: 0.55, SkillDemand: 0.3},
 			"chart.structure": {ReactivityAnchor: 0.85, SkillDemand: 1},
+			"range.channel":   {ReactivityAnchor: 0.25, SkillDemand: 0},
+			"range.bollinger": {ReactivityAnchor: 0.5, SkillDemand: 0.3},
+			"range.rsi":       {ReactivityAnchor: 0.75, SkillDemand: 0.3},
 		},
 		MethodProximityTau: 0.25,
 		MethodSkillGateEta: 1,
 
 		PerceptionRanges: map[string]NumericRange{
+			// Chart MA: brackets conventional default periods.
 			"chart.ma.fast_period": {Low: 5, High: 20},
 			"chart.ma.slow_period": {Low: 20, High: 100},
+			"chart.ma.flat_band":   {Low: 0.001, High: 0.01},
+			// Chart RSI: brackets conventional 14-period default.
+			"chart.rsi.period":   {Low: 7, High: 21},
+			"chart.rsi.mid_band": {Low: 3, High: 15},
+			// Chart structure.
+			"chart.structure.swing_window":   {Low: 3, High: 15},
+			"chart.structure.min_swing_pct":  {Low: 0.002, High: 0.02},
+			"chart.structure.confirm_swings": {Low: 1, High: 3},
+			// Range Bollinger: brackets conventional 20-period, 2-sigma defaults.
+			"range.bollinger.period":     {Low: 10, High: 40},
+			"range.bollinger.sigma_mult": {Low: 1.0, High: 2.5},
+			"range.bollinger.ob_os_band": {Low: 0.2, High: 0.5},
+			// Range channel (Donchian).
+			"range.channel.window":       {Low: 10, High: 50},
+			"range.channel.extreme_band": {Low: 0.3, High: 0.5},
+			// Range RSI.
+			"range.rsi.period":       {Low: 7, High: 21},
+			"range.rsi.ob_os_levels": {Low: 10, High: 30},
+			// Volume.
+			"volume.avg_window":     {Low: 10, High: 50},
+			"volume.spike_multiple": {Low: 1.5, High: 4.0},
+			"volume.band_width":     {Low: 0.1, High: 0.5},
+			// Liquidity.
+			"liquidity.depth_levels": {Low: 1, High: 5},
 		},
 		BiasTiltStrengths: map[string]float64{
-			"chart.direction": 0.2,
-			"chart.strength":  0.1,
+			"chart.direction":         0.2,
+			"chart.strength":          0.1,
+			"range.position_in_range": 0.2,
+			"range.stretch":           0.1,
 		},
 		RereadSensitivityRanges: map[string]NumericRange{
-			"chart": {Low: 0.001, High: 0.01},
+			"chart":     {Low: 0.001, High: 0.01},
+			"range":     {Low: 0.05, High: 0.3},
+			"volume":    {Low: 0.1, High: 0.5},
+			"liquidity": {Low: 0.05, High: 0.3},
 		},
 		DecideSensitivityRanges: map[string]NumericRange{
-			"chart.direction": {Low: 0.05, High: 0.3},
+			"chart.direction":         {Low: 0.05, High: 0.3},
+			"chart.strength":          {Low: 0.05, High: 0.3},
+			"range.position_in_range": {Low: 0.05, High: 0.3},
+			"range.stretch":           {Low: 0.05, High: 0.3},
 		},
 
 		ExitModeAnchors: map[string]float64{
