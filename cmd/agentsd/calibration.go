@@ -9,7 +9,15 @@ import (
 	"simulation-agents/agent"
 	"simulation-agents/orchestrator"
 	"simulation-agents/orchestrator/generator"
+	"simulation-agents/scenario"
 )
+
+// baselineScenarioSeed seeds the one deterministic sampling pass the
+// scenario engine takes at startup — the per-knob crowd-width (eta)
+// draw. The seed is fixed, deliberately, so the baseline link-space
+// is reproducible across restarts; live session randomness is a
+// separate (fresh-entropy) stream the orchestrator owns.
+const baselineScenarioSeed uint64 = 1
 
 // This file holds the calibration placeholder values the composition
 // root passes into the generator and the orchestrator. The project
@@ -131,6 +139,9 @@ func defaultGenParams() generator.GenParams {
 // calibration. PopulationSize is the per-bring-up target population;
 // LifecycleBuffer sizes the lifecycle-decision channel buffer; the
 // capital params are the dial set agent.DrawTradingCapital reads.
+// ValidScenarioNames is left empty here — the composition root fills
+// it from the loaded scenario registry so this helper does not need to
+// know about the scenario package.
 func defaultOrchestratorConfig() orchestrator.OrchestratorConfig {
 	return orchestrator.OrchestratorConfig{
 		PopulationSize:  100,
@@ -140,6 +151,22 @@ func defaultOrchestratorConfig() orchestrator.OrchestratorConfig {
 			JitterSpread:      0.1,
 			DefaultFundedCash: 100_000,
 		},
+	}
+}
+
+// defaultPresenceBaseline returns placeholder values for the four
+// lifecycle-curve rates the scenario engine shoves. The real values
+// live on the (future) curve-builder's own calibration and are
+// mirrored here so a scenario can be measured against the same
+// baseline the live session will use. All four are strictly positive
+// (the Log ruler requires it); the magnitudes are unitless placeholders
+// a reader can replace at calibration time without any code change.
+func defaultPresenceBaseline() scenario.PresenceBaseline {
+	return scenario.PresenceBaseline{
+		EntryRate:   10,
+		StepOutRate: 2,
+		DoneRate:    1,
+		ReentryRate: 4,
 	}
 }
 

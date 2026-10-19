@@ -180,6 +180,71 @@ func meanOptimism(t *testing.T, scenarioShifts *EffectiveParams) float64 {
 	return total / float64(count)
 }
 
+// TestShiftedParamsPullsThroughToEveryRootDraw confirms the main
+// path a scenario reaches the trait draw: when the overrides carry a
+// non-nil ShiftedParams, every root dial inside drawTraitVector reads
+// from the shifted copy, not the baseline. The test puts an extreme
+// shift onto AggressivenessBeta and asserts the population-level mean
+// aggressiveness moves far away from the baseline mean. The sample
+// size is large enough that a true population shift is unmistakable
+// against sampling noise.
+//
+// This is the "every trait receives shifted numbers" guarantee the
+// package relies on — a regression where drawTraitVector dropped the
+// ShiftedParams rebind would show up here as near-identical means.
+func TestShiftedParamsPullsThroughToEveryRootDraw(t *testing.T) {
+	baselineMean := meanAggressiveness(t, nil)
+
+	shiftedParams := completeGenParams()
+	shiftedParams.AggressivenessBeta = BetaPair{Alpha: 10, Beta: 1} // mean ≈ 0.91
+	polarizedMean := meanAggressiveness(t, &EffectiveParams{ShiftedParams: &shiftedParams})
+
+	// The baseline AggressivenessBeta is symmetric (2, 2), mean = 0.5.
+	// The shifted beta pulls the mean toward 0.91. A regression that
+	// ignored ShiftedParams would leave polarizedMean near 0.5.
+	if polarizedMean <= baselineMean+0.1 {
+		t.Fatalf("ShiftedParams did not pull through: baselineMean=%v shiftedMean=%v",
+			baselineMean, polarizedMean)
+	}
+}
+
+// TestShiftedParamsNilRebindMatchesBaseline guards the inverse: a
+// non-nil overrides pointer with a nil ShiftedParams (only PhiBimodal
+// set, say) must leave the root draws at baseline — the swap only
+// fires when ShiftedParams itself is non-nil.
+func TestShiftedParamsNilRebindMatchesBaseline(t *testing.T) {
+	baselineMean := meanAggressiveness(t, nil)
+	phiOnlyMean := meanAggressiveness(t, &EffectiveParams{
+		PhiBimodal: &BimodalOptimism{
+			MixWeight:      0.5,
+			FirstModeBeta:  BetaPair{Alpha: 8, Beta: 2},
+			SecondModeBeta: BetaPair{Alpha: 2, Beta: 8},
+		},
+	})
+	// Aggressiveness is unrelated to the bimodal override; the two
+	// means must land within sampling noise of each other.
+	if math.Abs(phiOnlyMean-baselineMean) > 0.03 {
+		t.Fatalf("PhiBimodal-only shift leaked into aggressiveness draw: baseline=%v phiOnly=%v",
+			baselineMean, phiOnlyMean)
+	}
+}
+
+// meanAggressiveness returns the average aggressiveness over a large
+// draw loop. Mirrors meanOptimism / spreadOptimism in shape; the
+// aggressiveness axis is read from the universal block, so it is
+// present on every agent regardless of kind.
+func meanAggressiveness(t *testing.T, scenarioShifts *EffectiveParams) float64 {
+	t.Helper()
+	params := completeGenParams()
+	total := 0.0
+	const sampleCount = 2000
+	for seedCounter := uint64(0); seedCounter < sampleCount; seedCounter++ {
+		traits := drawTraitVector(seededRNG(seedCounter, 77), params, scenarioShifts)
+		total += traits.Aggressiveness
+	}
+	return total / float64(sampleCount)
+}
+
 func spreadOptimism(t *testing.T, scenarioShifts *EffectiveParams) float64 {
 	t.Helper()
 	params := completeGenParams()

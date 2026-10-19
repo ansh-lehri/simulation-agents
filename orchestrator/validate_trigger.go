@@ -47,3 +47,25 @@ func validateTrigger(request transport.BringUpRequest) error {
 	}
 	return nil
 }
+
+// validateScenarioName rejects any non-empty scenario name that was
+// not registered at startup. The empty name is always accepted (it
+// signals a baseline on-demand bring-up); any other name must be in
+// validScenarios or the bring-up fails at intake.
+//
+// This is the one place a bad scenario name is surfaced before the
+// spine runs. The silent fallback-to-baseline behavior is deliberately
+// absent — an unknown name is an operator mistake and must be visible,
+// not quietly ignored.
+func validateScenarioName(scenarioName string, validScenarios map[string]struct{}) error {
+	if scenarioName == "" {
+		return nil
+	}
+	if _, present := validScenarios[scenarioName]; !present {
+		return fmt.Errorf(
+			"orchestrator: unknown scenario %q — not registered at startup",
+			scenarioName,
+		)
+	}
+	return nil
+}

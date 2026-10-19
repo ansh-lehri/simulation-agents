@@ -30,7 +30,17 @@ import (
 // flag after the whole population is drawn (promoting a revived carrier
 // when one exists). For an on-demand population the tipper is a runtime
 // per-session assignment made in a later phase, never a frozen trait.
+//
+// Scenario shift: when scenarioShifts carries a non-nil ShiftedParams,
+// the baseline params are rebound to the shifted copy for the whole
+// draw. Every subsequent per-trait sampler reads the shifted dials
+// without needing its own scenario-awareness — the generator stays
+// scenario-blind except for the one PhiBimodal branch inside the
+// optimism draw.
 func drawTraitVector(rng *rand.Rand, params GenParams, scenarioShifts *EffectiveParams) agent.TraitVector {
+	if scenarioShifts != nil && scenarioShifts.ShiftedParams != nil {
+		params = *scenarioShifts.ShiftedParams
+	}
 	kind := drawAgentKind(rng, params.HerdProbability)
 
 	traits := agent.TraitVector{

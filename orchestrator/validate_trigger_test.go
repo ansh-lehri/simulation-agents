@@ -54,6 +54,48 @@ func TestValidateTriggerCarriesEveryOtherFieldWithoutRejecting(t *testing.T) {
 	}
 }
 
+func TestValidateScenarioNameAcceptsEmpty(t *testing.T) {
+	// An empty scenario name means "baseline on-demand" and must
+	// always validate regardless of the registered accept-set.
+	if err := validateScenarioName("", map[string]struct{}{}); err != nil {
+		t.Fatalf("empty scenario name rejected: %v", err)
+	}
+	if err := validateScenarioName("", map[string]struct{}{"thin": {}}); err != nil {
+		t.Fatalf("empty scenario name rejected with non-empty set: %v", err)
+	}
+}
+
+func TestValidateScenarioNameAcceptsRegisteredName(t *testing.T) {
+	validSet := map[string]struct{}{"thin": {}, "calm": {}}
+	if err := validateScenarioName("thin", validSet); err != nil {
+		t.Fatalf("registered name rejected: %v", err)
+	}
+}
+
+func TestValidateScenarioNameRejectsUnregisteredName(t *testing.T) {
+	validSet := map[string]struct{}{"thin": {}, "calm": {}}
+	err := validateScenarioName("thinnn", validSet)
+	if err == nil {
+		t.Fatal("expected rejection for unregistered name")
+	}
+	if !strings.Contains(err.Error(), "thinnn") {
+		t.Errorf("error should name the bad input: %v", err)
+	}
+	if !strings.Contains(err.Error(), "unknown scenario") {
+		t.Errorf("error should name the kind of failure: %v", err)
+	}
+}
+
+func TestValidateScenarioNameRejectsAnyNameAgainstEmptySet(t *testing.T) {
+	// A process with no scenario engine wired has an empty accept-set.
+	// Any non-empty Scenario field must be rejected — otherwise an
+	// unconfigured process would silently drop the shift.
+	err := validateScenarioName("thin", map[string]struct{}{})
+	if err == nil {
+		t.Fatal("expected rejection against empty accept-set")
+	}
+}
+
 func TestValidateTriggerRejectsStructuralViolations(t *testing.T) {
 	cases := []struct {
 		name          string

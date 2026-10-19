@@ -9,13 +9,14 @@ import (
 	"simulation-agents/orchestrator/generator"
 )
 
-// baselineGenParams returns a minimally populated GenParams whose
-// scalar-knob fields have known, calibration-realistic values. Only
-// the dials the moments layer reads are populated — the rest stay
-// zero because moments.go does not touch them. A trailing field
-// outside this subset is deliberately irrelevant to the moment
-// extraction, which keeps the test insulated from future GenParams
-// additions.
+// baselineGenParams returns a complete GenParams whose every field
+// passes generator.GenParams.Validate — a precondition the scenario
+// engine's constructor enforces. The scalar fields hold the moments
+// the moments layer tests actually read; the map fields are present
+// so the fixture is a drop-in for every test that threads a GenParams
+// through NewEngine. Keeping one fixture (instead of a stripped and
+// a complete one) means a test touching new fields does not need to
+// reach for a different helper.
 func baselineGenParams() generator.GenParams {
 	return generator.GenParams{
 		HerdProbability:    0.3,
@@ -23,6 +24,7 @@ func baselineGenParams() generator.GenParams {
 		AggressivenessBeta: generator.BetaPair{Alpha: 2, Beta: 2},
 		PnlReactivityBeta:  generator.BetaPair{Alpha: 1.5, Beta: 4},
 		PActBeta:           generator.BetaPair{Alpha: 1, Beta: 1},
+		ActProbBeta:        generator.BetaPair{Alpha: 2, Beta: 2},
 		ReactivityBeta:     generator.BetaPair{Alpha: 2, Beta: 5},
 		OptimismBeta:       generator.BetaPair{Alpha: 3, Beta: 3},
 		CapitalSizeLogNormal: generator.LogNormalPair{
@@ -33,6 +35,38 @@ func baselineGenParams() generator.GenParams {
 			Trend:         2,
 			MeanReversion: 1,
 			Noise:         1,
+		},
+		DietOptionalFlagProbability: 0.5,
+		SigmaIdio:                   0.05,
+		MethodAnchorsAndDemands: map[string]generator.MethodAnchor{
+			"chart.ma":  {ReactivityAnchor: 0.25, SkillDemand: 0},
+			"chart.rsi": {ReactivityAnchor: 0.55, SkillDemand: 0.3},
+		},
+		MethodProximityTau: 0.25,
+		MethodSkillGateEta: 1,
+		PerceptionRanges: map[string]generator.NumericRange{
+			"chart.ma.fast_period": {Low: 5, High: 20},
+			"chart.rsi.period":     {Low: 7, High: 21},
+		},
+		BiasTiltStrengths: map[string]float64{
+			"chart.direction": 0.2,
+			"chart.strength":  0.1,
+		},
+		ExitModeAnchors: map[string]float64{
+			"distance": 0.2,
+			"level":    0.85,
+		},
+		ExitModeSelectionTau:                 0.25,
+		ExitStopPctRange:                     generator.NumericRange{Low: 0.005, High: 0.03},
+		ExitRewardRiskRange:                  generator.NumericRange{Low: 1, High: 3},
+		ExitStopBufferRange:                  generator.NumericRange{Low: 0.001, High: 0.01},
+		ExitTargetBufferRange:                generator.NumericRange{Low: 0.001, High: 0.01},
+		MaxHoldRange:                         generator.IntRange{Low: 10, High: 600},
+		ChannelWeightsDirichletConcentration: 1,
+		TraitChannelSets: map[string][]string{
+			"trend":    {"chart", "volume"},
+			"mean_rev": {"range", "volume"},
+			"noise":    {"time_of_session"},
 		},
 	}
 }

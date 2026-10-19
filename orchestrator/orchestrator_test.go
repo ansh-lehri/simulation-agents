@@ -292,6 +292,27 @@ func TestBringUpSurfacesValidationError(t *testing.T) {
 	}
 }
 
+func TestBringUpRejectsUnregisteredScenarioName(t *testing.T) {
+	// A scenario name not in the fixture's accept-set must fail at
+	// intake with an error that names the bad input. The spine must
+	// not run — no account-open side effects should fire.
+	orchestrator := mustBuildOrchestrator(t, discardLogger())
+	bad := completeBringUpRequest()
+	bad.SessionType = SessionTypeOnDemand
+	bad.Scenario = "not_a_real_scenario"
+
+	ack, err := orchestrator.BringUp(context.Background(), bad)
+	if err == nil {
+		t.Fatalf("expected intake rejection, got nil (ack=%+v)", ack)
+	}
+	if !strings.Contains(err.Error(), "not_a_real_scenario") {
+		t.Errorf("error should name the bad input: %v", err)
+	}
+	if ack != (transport.BringUpAck{}) {
+		t.Errorf("ack should be zero on intake rejection, got %+v", ack)
+	}
+}
+
 func TestBringUpWarnsOnCanonicalWithScenario(t *testing.T) {
 	// Capture the logger's output so we can assert the warn line fires
 	// when a canonical trigger carries a scenario name — the carry is

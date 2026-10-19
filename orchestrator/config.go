@@ -31,6 +31,20 @@ type OrchestratorConfig struct {
 	// Validation of these dials is agent-package business; this struct
 	// just carries them.
 	CapitalParams agent.CapitalParams
+
+	// ValidScenarioNames is the accept-set the inbound bring-up
+	// validator consults for BringUpRequest.Scenario. A non-empty
+	// scenario name must be in this set or the bring-up is rejected
+	// at intake — no silent fallback to baseline. The empty string
+	// is always accepted (it signals a baseline on-demand bring-up)
+	// and is not required to be listed.
+	//
+	// An empty slice is valid: it means "no scenarios registered",
+	// in which case any non-empty Scenario field is rejected. The
+	// composition root populates this from the loaded scenario
+	// registry so the orchestrator does not need to import the
+	// scenario package.
+	ValidScenarioNames []string
 }
 
 // Validate returns a non-nil error if any orchestrator-level dial
@@ -43,6 +57,16 @@ func (config OrchestratorConfig) Validate() error {
 	}
 	if config.LifecycleBuffer < 0 {
 		return fmt.Errorf("orchestrator: LifecycleBuffer %d must be non-negative", config.LifecycleBuffer)
+	}
+	seenScenario := make(map[string]struct{}, len(config.ValidScenarioNames))
+	for _, scenarioName := range config.ValidScenarioNames {
+		if scenarioName == "" {
+			return fmt.Errorf("orchestrator: ValidScenarioNames contains an empty name")
+		}
+		if _, duplicate := seenScenario[scenarioName]; duplicate {
+			return fmt.Errorf("orchestrator: ValidScenarioNames contains duplicate %q", scenarioName)
+		}
+		seenScenario[scenarioName] = struct{}{}
 	}
 	return nil
 }

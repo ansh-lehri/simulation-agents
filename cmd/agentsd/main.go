@@ -14,6 +14,7 @@ import (
 	"simulation-agents/core"
 	"simulation-agents/orchestrator"
 	"simulation-agents/orchestrator/generator"
+	"simulation-agents/scenario"
 	"simulation-agents/store"
 	"simulation-agents/transport"
 )
@@ -93,15 +94,39 @@ func run(logger *slog.Logger) error {
 	leaseAllocator := store.NewRedisLeaseAllocator(redisClient)
 	pendingMintWAL := store.NewRedisPendingMintWAL(redisClient)
 
+	// Build the scenario engine. The registry is loaded from the
+	// in-code default blobs (validated against the catalogue at load
+	// time); the baseline link-space + eta are computed once at
+	// startup from the GenParams + presence baseline. The engine
+	// satisfies generator.ScenarioProvider — it is the production
+	// replacement for the no-op provider the generator was wired to
+	// in the previous phase.
+	scenarioRegistry, err := scenario.Load(scenario.DefaultRegistry(), scenario.DefaultCatalogue())
+	if err != nil {
+		return fmt.Errorf("agentsd: load scenario registry: %w", err)
+	}
+	scenarioEngine, err := scenario.NewEngine(
+		defaultGenParams(),
+		defaultPresenceBaseline(),
+		scenario.DefaultCatalogue(),
+		scenarioRegistry,
+		baselineScenarioSeed,
+		logger,
+	)
+	if err != nil {
+		return fmt.Errorf("agentsd: build scenario engine: %w", err)
+	}
+
 	// Build the trait-draw engine. GenParams values are calibration
 	// placeholders defined alongside this file; the generator package
-	// holds mechanism only. The scenario provider is a no-op until the
-	// scenario-engine phase lands, which will replace this one line.
+	// holds mechanism only. The scenario engine is passed in as the
+	// provider — a non-empty scenario name on an on-demand bring-up
+	// now reaches the real shove / invert / switches pipeline.
 	populationGenerator, err := generator.NewGenerator(
 		agentStore,
 		leaseAllocator,
 		pendingMintWAL,
-		generator.NoOpScenarioProvider{},
+		scenarioEngine,
 		defaultGenParams(),
 		newUUIDAgentID(),
 		systemClock,
@@ -120,6 +145,10 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("agentsd: build account-open client: %w", err)
 	}
 	orchestratorConfig := defaultOrchestratorConfig()
+	// Hand the loaded registry's names into the orchestrator so its
+	// intake rejects any BringUp whose scenario field is non-empty
+	// and not one of the registered names.
+	orchestratorConfig.ValidScenarioNames = scenarioEngine.RegistryNames()
 	capitalResolver, err := orchestrator.NewCapitalResolver(orchestratorConfig.CapitalParams, logger)
 	if err != nil {
 		return fmt.Errorf("agentsd: build capital resolver: %w", err)

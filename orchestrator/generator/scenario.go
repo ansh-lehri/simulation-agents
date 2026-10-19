@@ -6,13 +6,21 @@ package generator
 // as a whole signals "baseline for every dial" and is the standing shape
 // the agent process runs with when no scenario is attached to a session.
 //
-// Only one shift lives on this struct today: the bimodal optimism override,
-// which replaces the baseline unimodal optimism draw with a two-mode
-// mixture. The optimism latent is the one draw whose SHAPE a scenario
-// changes; every other scenario effect is a numeric shift to a calibration
-// dial, folded into this struct as pointer fields alongside PhiBimodal as
-// the scenario engine lands.
+// Two shifts live on this struct. ShiftedParams carries the full shifted
+// GenParams the trait draw reads for every root dial — a scenario's shove
+// is a redraw against the shifted dials, not a mutation of already-drawn
+// values. PhiBimodal carries the one SHAPE-changing override, replacing
+// the unimodal optimism draw with a two-mode mixture for scenarios whose
+// character is "two camps" rather than a shifted single center.
 type EffectiveParams struct {
+	// ShiftedParams, when non-nil, is the full shifted GenParams the
+	// trait draw consults in place of the baseline calibration. The
+	// scenario engine produces this by shoving every root dial on its
+	// ruler, inverting back to real distribution parameters, and
+	// writing them into a copy of baseline GenParams. A nil pointer
+	// means every root dial stays at baseline — the no-scenario path.
+	ShiftedParams *GenParams
+
 	// PhiBimodal, when non-nil, replaces the baseline unimodal optimism
 	// draw with a two-mode mixture. Used to shape sessions that run with a
 	// polarized population (clear optimists AND clear pessimists at once)
@@ -42,11 +50,30 @@ type BimodalOptimism struct {
 
 // CurveEffective carries scenario-shifted lifecycle-curve overrides. It
 // rides from the scenario resolver to a later handoff that writes session
-// parameters; the generator does not consume it. The shape is pinned here
-// so the scenario provider's return type is stable across phases, and so a
-// no-op implementation can return the right zero value today.
+// parameters; the generator does not consume it. A nil *CurveEffective
+// (empty scenario) means every rate stays at baseline — the session
+// parameter writer applies no curve shift.
+//
+// The four rates are shoved on the Log ruler by the scenario engine and
+// land here in their inverted (strictly positive) form, so the lifecycle
+// curve builder downstream reads them unchanged whether a scenario is
+// attached or not.
 type CurveEffective struct {
-	// Fields land as the lifecycle-curve shifting mechanism is designed.
+	// EntryRate is the shifted arrival rate of agents into the live
+	// session.
+	EntryRate float64
+
+	// StepOutRate is the shifted rate at which present agents
+	// temporarily step away from the floor.
+	StepOutRate float64
+
+	// DoneRate is the shifted rate at which agents finish for the
+	// session.
+	DoneRate float64
+
+	// ReentryRate is the shifted rate at which stepped-out agents
+	// return to the floor.
+	ReentryRate float64
 }
 
 // ScenarioProvider resolves a scenario name against a country into the two

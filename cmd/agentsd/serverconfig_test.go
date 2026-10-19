@@ -7,10 +7,10 @@ import (
 
 func TestLoadListenAddr(t *testing.T) {
 	testCases := []struct {
-		name                      string
-		envValue                  string
-		expectedAddr              string
-		expectedErrorSubstring    string
+		name                   string
+		envValue               string
+		expectedAddr           string
+		expectedErrorSubstring string
 	}{
 		{
 			name:         "empty env falls back to loopback default",

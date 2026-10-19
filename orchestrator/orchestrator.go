@@ -41,12 +41,13 @@ type PopulationGenerator interface {
 // session trading capital, and hand off to the asynchronous tail that
 // persists, snapshots, and spawns the per-exchange run goroutine.
 type Orchestrator struct {
-	generator   PopulationGenerator
-	accountOpen *AccountOpenClient
-	capital     *CapitalResolver
-	rngSource   RNGSource
-	config      OrchestratorConfig
-	logger      *slog.Logger
+	generator      PopulationGenerator
+	accountOpen    *AccountOpenClient
+	capital        *CapitalResolver
+	rngSource      RNGSource
+	config         OrchestratorConfig
+	logger         *slog.Logger
+	validScenarios map[string]struct{}
 }
 
 // NewOrchestrator wires an Orchestrator from its dependencies and
@@ -80,13 +81,18 @@ func NewOrchestrator(
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("orchestrator: invalid config: %w", err)
 	}
+	validScenarios := make(map[string]struct{}, len(config.ValidScenarioNames))
+	for _, scenarioName := range config.ValidScenarioNames {
+		validScenarios[scenarioName] = struct{}{}
+	}
 	return &Orchestrator{
-		generator:   populationGenerator,
-		accountOpen: accountOpenClient,
-		capital:     capitalResolver,
-		rngSource:   rngSource,
-		config:      config,
-		logger:      logger,
+		generator:      populationGenerator,
+		accountOpen:    accountOpenClient,
+		capital:        capitalResolver,
+		rngSource:      rngSource,
+		config:         config,
+		logger:         logger,
+		validScenarios: validScenarios,
 	}, nil
 }
 
@@ -106,6 +112,13 @@ func (orchestrator *Orchestrator) BringUp(
 	request transport.BringUpRequest,
 ) (transport.BringUpAck, error) {
 	if err := validateTrigger(request); err != nil {
+		return transport.BringUpAck{}, err
+	}
+	// Reject an unknown scenario name at intake rather than silently
+	// resolving to baseline inside the spine. A silent fallback is
+	// the exact failure mode scenarios must avoid — an operator who
+	// typed a bad name must see the rejection, not a confused run.
+	if err := validateScenarioName(request.Scenario, orchestrator.validScenarios); err != nil {
 		return transport.BringUpAck{}, err
 	}
 	if request.SessionType == SessionTypeCanonical && request.Scenario != "" {
