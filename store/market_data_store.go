@@ -36,8 +36,10 @@ type Quote struct {
 
 // MarketDataStore writes the cached market-data window + latest quote.
 // This system is a pure consumer / cache — no rollup, no derived
-// timeframes. Serving timeframes other than the one written here is the
-// broker's job.
+// timeframes. Which timeframes are populated is a caller-side
+// decision: the history pull reads a configured list from the subset
+// {1m, 5m, 30m, 60m} and writes each cleanly from Core. Serving a
+// timeframe that was NOT written here is the broker's job.
 type MarketDataStore interface {
 	// WriteCandles seeds the OHLCV window for one (exchange, instrument,
 	// timeframe) key. Replace semantics: the current list is dropped
