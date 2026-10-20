@@ -151,3 +151,26 @@ func (redisStore *RedisRuntimeStore) SetTipper(ctx context.Context, exchangeID s
 	}
 	return nil
 }
+
+// MarkSessionLoadFailed stamps the pre-open session-install failure
+// outcome for one agent so the tick-loop scheduler can skip the
+// agent at activate time. The method is not on the RuntimeStore
+// interface above because the orchestrator (its only interface
+// consumer today) never calls it; the method sits on the concrete
+// type so the session package can require it on its own narrow
+// extension of this interface.
+func (redisStore *RedisRuntimeStore) MarkSessionLoadFailed(
+	ctx context.Context,
+	exchangeID string,
+	agentID agent.AgentID,
+	reason string,
+) error {
+	key := RuntimeKey(exchangeID, agentID)
+	if err := redisStore.client.HSet(ctx, key,
+		FieldLoadStatus, LoadStatusFailed,
+		FieldLoadError, reason,
+	).Err(); err != nil {
+		return fmt.Errorf("store: mark session load failed for %s on %s: %w", agentID, exchangeID, err)
+	}
+	return nil
+}

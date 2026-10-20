@@ -23,11 +23,9 @@ goroutine per exchange.
 - **`Run(req, pop, ch)`** (the `runAgentPopulation` body) — the goroutine entry the orchestrator
   spawns at the end of 2b: (1) stamp each agent's `entry_time` from the entry curve over
   `[start,end]` · (2) run the THREE pre-open ops CONCURRENTLY — `loadSessions` (bulk install),
-  `pullHistory` (`GetCandles` tf=1m → `WriteCandles`), `subscribeLive` (one WS per exchange →
-  cache snapshot + spawn `ingest`) · (3) JOIN all three · (4) `waitUntil(start)` →
+  `pullHistory` (`GetCandles` per configured timeframe (subset of `{1m,5m,30m,60m}`) → `WriteCandles` keyed per `(instrument, tf)`), `subscribeLive` (one WS per exchange, one batched subscribe carrying one snapshot sub per instrument plus one candle sub per `(instrument × configured TF)` → cache snapshot + spawn `ingest`) · (3) JOIN all three · (4) `waitUntil(start)` →
   `startScheduler` (STUB → Tier 3) → `reportReady`.
-- **`ingest`** — one WS-consumer goroutine per exchange: `candle`→`AppendCandle`,
-  `snapshot`→`WriteQuote` overwrite; outlives the join; `SessionClosed` hook → Tier 6.
+- **`ingest`** — one WS-consumer goroutine per exchange: `candle`→`AppendCandle` (keyed by the frame's own timeframe), `snapshot`→`WriteQuote` overwrite; outlives the join; `SessionClosed` hook → Tier 6.
 - **`drawEntryTime`** — the entry-curve helper (seeded). *(This package is also the natural home
   for the Tier-3 3b presence curves that consume `curve_eff`.)*
 - Consumes the **handover**: the in-memory `Population` (frozen traits = specs), the
@@ -50,7 +48,7 @@ goroutine per exchange.
   candles); live comes from the on-demand instance; both cached under the on-demand `exchange_id`.
 - **Stores nothing from session-load but per-agent success/fail** — agent identity to the broker
   at order time is `capital_handle`, not participant_id.
-- One WS per exchange; all Core calls via `o.core`, spec L2's side only (cross-layer rule).
+- One WS per exchange; the subscribe batch on it covers one snapshot sub per instrument plus one candle sub per `(instrument × configured TF)`. All Core calls via `o.core`, spec L2's side only (cross-layer rule).
 
 ## Do NOT
 - Do NOT write Postgres — hand durable writes back through the orchestrator.

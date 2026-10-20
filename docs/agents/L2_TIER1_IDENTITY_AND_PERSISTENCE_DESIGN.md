@@ -166,7 +166,7 @@ Herd vs endogenous: endogenous carry the 4b/4d blocks and no tip-state; herd car
 
 5.2 Other runtime keys
 runtime:{exchange_id}:tipslot          -- shared active-tip slot (per exchange): { tip_id, direction, conviction, target, stop_loss }
-marketdata:{exchange_id}:{instrument}:candles:{tf}  -- 1-min OHLCV window (only tf=1m populated now); append/range
+marketdata:{exchange_id}:{instrument}:candles:{tf}  -- OHLCV window per timeframe (tf ∈ {1m,5m,30m,60m}; which tfs are populated is a per-bring-up config dial — the history pull is driven by that list); append/range
 marketdata:{exchange_id}:{instrument}:quote         -- latest quote/depth/price; overwrite, last-writer-wins
 lease:{country}:available              -- SET of free on-demand agent_ids (§6)
 lease:{country}:leased                 -- HASH agent_id → exchange_id (who holds each busy one) (§6)

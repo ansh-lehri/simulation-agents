@@ -15,6 +15,7 @@ import (
 	"simulation-agents/orchestrator"
 	"simulation-agents/orchestrator/generator"
 	"simulation-agents/scenario"
+	"simulation-agents/session"
 	"simulation-agents/store"
 	"simulation-agents/transport"
 )
@@ -89,10 +90,14 @@ func run(logger *slog.Logger) error {
 	// Build the agent-side stores over the pool/client handles. Each
 	// store carves out just the surface the orchestrator and generator
 	// consume: durable identity + per-session Redis state + the lease
-	// pool bookkeeping + the write-ahead log.
+	// pool bookkeeping + the write-ahead log + the market-data cache
+	// + the sessions:active hash the bring-up tail writes.
 	agentStore := store.NewPostgresAgentStore(postgresPool)
+	runtimeStore := store.NewRedisRuntimeStore(redisClient)
 	leaseAllocator := store.NewRedisLeaseAllocator(redisClient)
 	pendingMintWAL := store.NewRedisPendingMintWAL(redisClient)
+	marketDataStore := store.NewRedisMarketDataStore(redisClient)
+	activeSessionStore := store.NewRedisActiveSessionStore(redisClient)
 
 	// Build the scenario engine. The registry is loaded from the
 	// in-code default blobs (validated against the catalogue at load
@@ -154,6 +159,39 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("agentsd: build capital resolver: %w", err)
 	}
 
+	// Build the per-exchange session runner. The scheduler stub is
+	// a logging no-op this phase; the real tick loop replaces it
+	// later with no caller change here. The core-client adapter
+	// below bridges *core.Client's concrete WS return type into
+	// session.WSConnection so the runner can hold the interface.
+	//
+	// The failure reporter is a thin adapter that resolves to the
+	// orchestrator's own FailBringUp / ReportReady methods — the
+	// orchestrator is the single failure surface for both tail
+	// steps and the goroutine's pre-open ops. The adapter's inner
+	// pointer is nil at construction and gets patched below once
+	// the orchestrator is built; no bring-up can fire in that
+	// window because the server has not yet been started.
+	sessionScheduler, err := session.NewNoOpScheduler(logger)
+	if err != nil {
+		return fmt.Errorf("agentsd: build session scheduler stub: %w", err)
+	}
+	orchestratorFailureAdapter := &orchestratorFailureReporterAdapter{}
+	sessionRunner, err := session.NewRunner(session.Dependencies{
+		Core:       &sessionCoreClientAdapter{inner: coreClient},
+		Runtime:    runtimeStore,
+		MarketData: marketDataStore,
+		Scheduler:  sessionScheduler,
+		Failure:    orchestratorFailureAdapter,
+		Clock:      session.NewRealClock(),
+		RNGSource:  orchestrator.NewFreshEntropySource(),
+		Params:     defaultSessionParams(),
+		Logger:     logger,
+	})
+	if err != nil {
+		return fmt.Errorf("agentsd: build session runner: %w", err)
+	}
+
 	// Compose the orchestrator. Live sessions use the fresh-entropy
 	// seed source so one bring-up's randomness is independent of
 	// another's.
@@ -162,12 +200,24 @@ func run(logger *slog.Logger) error {
 		accountOpenClient,
 		capitalResolver,
 		orchestrator.NewFreshEntropySource(),
+		agentStore,
+		runtimeStore,
+		leaseAllocator,
+		pendingMintWAL,
+		activeSessionStore,
+		scenarioEngine,
+		sessionRunner,
 		orchestratorConfig,
 		logger,
 	)
 	if err != nil {
 		return fmt.Errorf("agentsd: build orchestrator: %w", err)
 	}
+	// Close the two-phase wiring loop: patch the failure adapter
+	// now that the orchestrator exists, so the session runner's
+	// FailBringUp / ReportReady calls reach the orchestrator's
+	// methods on the next bring-up.
+	orchestratorFailureAdapter.inner = bringUpOrchestrator
 
 	server := transport.New(listenAddr, bringUpOrchestrator, logger)
 

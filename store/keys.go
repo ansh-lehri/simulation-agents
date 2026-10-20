@@ -30,7 +30,21 @@ const (
 	FieldEntryTime      = "entry_time"
 	FieldNextCheckTime  = "next_check_time"
 	FieldIdleSince      = "idle_since"
+
+	// FieldLoadStatus and FieldLoadError record a single agent's
+	// pre-open session-install outcome when the install did not
+	// succeed (partial-OK behavior). The tick-loop scheduler reads
+	// FieldLoadStatus to skip the agent at activate time; the
+	// error string is retained so an operator inspecting Redis
+	// sees why.
+	FieldLoadStatus = "load_status"
+	FieldLoadError  = "load_error"
 )
+
+// LoadStatusFailed is the stored value for FieldLoadStatus when
+// a per-agent install failed and the agent should be skipped at
+// activate time.
+const LoadStatusFailed = "failed"
 
 // IsTipperTrue is the stored value for the is_tipper flag. The runtime
 // hash is a flat string-string hash in Redis, so booleans are serialized

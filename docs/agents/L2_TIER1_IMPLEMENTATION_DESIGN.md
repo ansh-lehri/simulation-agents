@@ -165,7 +165,7 @@ Point 5 — Market-data cache (keys only; writer = Tier 2 ingest)
 
 What it is. The Redis layout for cached market data; L2 is a pure consumer (no rollup).
 
-Expected & why. candles:{tf} (only 1m populated) append/range; quote overwrite. One WS per exchange_id; exchange_id namespace gives canonical/on-demand isolation for free.
+Expected & why. candles:{tf} append/range (which tfs are populated is a per-bring-up dial — the history pull reads a configured list from the subset {1m,5m,30m,60m} and seeds each; the live subscribe batch carries one candle sub per configured tf on the same WS); quote overwrite. One WS per exchange_id; exchange_id namespace gives canonical/on-demand isolation for free.
 
 The implementation. Keys as in Point 4 (candleKey, quoteKey). Ops:
 
@@ -176,7 +176,7 @@ type MarketDataStore interface {
     WriteQuote(ex, inst string, q Quote) error             // live ingest, overwrite
 }
 
-Decisions. No fold/rollup method exists — serving any TF is the broker's job. On-demand history is written under the on-demand exchange_id from the canonical market's candles (the source selection is a Tier-2 2c concern; the store is TF/instrument-keyed and source-agnostic).
+Decisions. No fold/rollup method exists — the store writes whichever TFs the caller pulls, and TFs the caller did NOT pull are served fresh by the broker on demand. On-demand history is written under the on-demand exchange_id from the canonical market's candles (the source selection is a Tier-2 2c concern; the store is TF/instrument-keyed and source-agnostic).
 
 Point 6 — The pending_mint WAL
 

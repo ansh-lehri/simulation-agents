@@ -13,6 +13,7 @@ import (
 
 	"simulation-agents/agent"
 	"simulation-agents/orchestrator/generator"
+	"simulation-agents/session"
 	"simulation-agents/store"
 	"simulation-agents/transport"
 )
@@ -29,6 +30,10 @@ import (
 
 type nopAgentStore struct{}
 
+func (nopAgentStore) InsertAgent(ctx context.Context, agentRecord agent.Agent) error {
+	_, _ = ctx, agentRecord
+	return nil
+}
 func (nopAgentStore) LiveMembers(ctx context.Context, country, population string) ([]agent.Agent, error) {
 	_, _, _ = ctx, country, population
 	return nil, nil
@@ -37,12 +42,51 @@ func (nopAgentStore) LoadMany(ctx context.Context, agentIDs []agent.AgentID) ([]
 	_, _ = ctx, agentIDs
 	return nil, nil
 }
+func (nopAgentStore) Retire(ctx context.Context, agentID agent.AgentID, retiredAt time.Time) error {
+	_, _, _ = ctx, agentID, retiredAt
+	return nil
+}
+
+type nopRuntimeStore struct{}
+
+func (nopRuntimeStore) WriteInitialSnapshot(ctx context.Context, exchangeID string, agentRecord agent.Agent) error {
+	_, _, _ = ctx, exchangeID, agentRecord
+	return nil
+}
+func (nopRuntimeStore) SetPresence(ctx context.Context, exchangeID string, agentID agent.AgentID, presence string) error {
+	_, _, _, _ = ctx, exchangeID, agentID, presence
+	return nil
+}
+func (nopRuntimeStore) SetTimers(ctx context.Context, exchangeID string, agentID agent.AgentID, nextCheckTime, idleSince int64) error {
+	_, _, _, _, _ = ctx, exchangeID, agentID, nextCheckTime, idleSince
+	return nil
+}
+func (nopRuntimeStore) StampEntryTime(ctx context.Context, exchangeID string, agentID agent.AgentID, entryTime float64) error {
+	_, _, _, _ = ctx, exchangeID, agentID, entryTime
+	return nil
+}
+func (nopRuntimeStore) SetTipper(ctx context.Context, exchangeID string, agentID agent.AgentID) error {
+	_, _, _ = ctx, exchangeID, agentID
+	return nil
+}
 
 type nopLeaseAllocator struct{}
 
 func (nopLeaseAllocator) SelectAvailable(ctx context.Context, country string, count int, exchangeID string) ([]agent.AgentID, error) {
 	_, _, _, _ = ctx, country, count, exchangeID
 	return nil, nil
+}
+func (nopLeaseAllocator) Enlist(ctx context.Context, country string, agentID agent.AgentID, exchangeID string) error {
+	_, _, _, _ = ctx, country, agentID, exchangeID
+	return nil
+}
+func (nopLeaseAllocator) Release(ctx context.Context, country string, agentIDs []agent.AgentID) error {
+	_, _, _ = ctx, country, agentIDs
+	return nil
+}
+func (nopLeaseAllocator) Reconcile(ctx context.Context, country string, liveExchanges map[string]bool, members []agent.AgentID) error {
+	_, _, _, _ = ctx, country, liveExchanges, members
+	return nil
 }
 
 type nopWAL struct {
@@ -56,6 +100,64 @@ func (wal *nopWAL) Stage(ctx context.Context, agentID agent.AgentID, record stor
 	defer wal.mutex.Unlock()
 	wal.stagedCount++
 	return nil
+}
+func (wal *nopWAL) Clear(ctx context.Context, agentID agent.AgentID) error {
+	_, _ = ctx, agentID
+	return nil
+}
+func (wal *nopWAL) Drain(ctx context.Context) ([]store.StageRecord, error) {
+	_ = ctx
+	return nil, nil
+}
+
+type nopActiveSessionStore struct{}
+
+func (nopActiveSessionStore) Register(ctx context.Context, exchangeID string, record store.ActiveSessionRecord) error {
+	_, _, _ = ctx, exchangeID, record
+	return nil
+}
+
+type nopSessionRunner struct{}
+
+func (nopSessionRunner) Run(
+	ctx context.Context,
+	request transport.BringUpRequest,
+	population generator.Population,
+	lifecycleChannel chan<- session.LifecycleDecision,
+) {
+	_, _, _, _ = ctx, request, population, lifecycleChannel
+}
+
+// newOrchestratorWithStubTail is the shared constructor every
+// orchestrator test uses when it does not care about the bring-up
+// tail's writes. It passes the original five dependencies through
+// and fills the new tail-side ones with no-op stubs. Tests that
+// want to assert on a specific tail step (persist, snapshot, enlist,
+// register, spawn) build their own stub set and call NewOrchestrator
+// directly.
+func newOrchestratorWithStubTail(
+	populationGenerator PopulationGenerator,
+	accountOpenClient *AccountOpenClient,
+	capitalResolver *CapitalResolver,
+	rngSource RNGSource,
+	config OrchestratorConfig,
+	logger *slog.Logger,
+) (*Orchestrator, error) {
+	return NewOrchestrator(
+		populationGenerator,
+		accountOpenClient,
+		capitalResolver,
+		rngSource,
+		nopAgentStore{},
+		nopRuntimeStore{},
+		nopLeaseAllocator{},
+		&nopWAL{},
+		nopActiveSessionStore{},
+		generator.NoOpScenarioProvider{},
+		nopSessionRunner{},
+		config,
+		logger,
+	)
 }
 
 // completeGenParams is the generator's own completeGenParams reproduced
@@ -206,23 +308,72 @@ func TestNewOrchestratorRejectsNilDependencies(t *testing.T) {
 		call func() error
 	}{
 		{"nil generator", func() error {
-			_, err := NewOrchestrator(nil, accountOpen, capital, rngSource, config, logger)
+			_, err := newOrchestratorWithStubTail(nil, accountOpen, capital, rngSource, config, logger)
 			return err
 		}},
 		{"nil accountOpen", func() error {
-			_, err := NewOrchestrator(testGenerator, nil, capital, rngSource, config, logger)
+			_, err := newOrchestratorWithStubTail(testGenerator, nil, capital, rngSource, config, logger)
 			return err
 		}},
 		{"nil capital", func() error {
-			_, err := NewOrchestrator(testGenerator, accountOpen, nil, rngSource, config, logger)
+			_, err := newOrchestratorWithStubTail(testGenerator, accountOpen, nil, rngSource, config, logger)
 			return err
 		}},
 		{"nil rngSource", func() error {
-			_, err := NewOrchestrator(testGenerator, accountOpen, capital, nil, config, logger)
+			_, err := newOrchestratorWithStubTail(testGenerator, accountOpen, capital, nil, config, logger)
 			return err
 		}},
 		{"nil logger", func() error {
-			_, err := NewOrchestrator(testGenerator, accountOpen, capital, rngSource, config, nil)
+			_, err := newOrchestratorWithStubTail(testGenerator, accountOpen, capital, rngSource, config, nil)
+			return err
+		}},
+		{"nil agentStore", func() error {
+			_, err := NewOrchestrator(testGenerator, accountOpen, capital, rngSource,
+				nil, nopRuntimeStore{}, nopLeaseAllocator{}, &nopWAL{},
+				nopActiveSessionStore{}, generator.NoOpScenarioProvider{}, nopSessionRunner{},
+				config, logger)
+			return err
+		}},
+		{"nil runtimeStore", func() error {
+			_, err := NewOrchestrator(testGenerator, accountOpen, capital, rngSource,
+				nopAgentStore{}, nil, nopLeaseAllocator{}, &nopWAL{},
+				nopActiveSessionStore{}, generator.NoOpScenarioProvider{}, nopSessionRunner{},
+				config, logger)
+			return err
+		}},
+		{"nil leaseAllocator", func() error {
+			_, err := NewOrchestrator(testGenerator, accountOpen, capital, rngSource,
+				nopAgentStore{}, nopRuntimeStore{}, nil, &nopWAL{},
+				nopActiveSessionStore{}, generator.NoOpScenarioProvider{}, nopSessionRunner{},
+				config, logger)
+			return err
+		}},
+		{"nil pendingMintWAL", func() error {
+			_, err := NewOrchestrator(testGenerator, accountOpen, capital, rngSource,
+				nopAgentStore{}, nopRuntimeStore{}, nopLeaseAllocator{}, nil,
+				nopActiveSessionStore{}, generator.NoOpScenarioProvider{}, nopSessionRunner{},
+				config, logger)
+			return err
+		}},
+		{"nil activeSessionStore", func() error {
+			_, err := NewOrchestrator(testGenerator, accountOpen, capital, rngSource,
+				nopAgentStore{}, nopRuntimeStore{}, nopLeaseAllocator{}, &nopWAL{},
+				nil, generator.NoOpScenarioProvider{}, nopSessionRunner{},
+				config, logger)
+			return err
+		}},
+		{"nil scenarioProvider", func() error {
+			_, err := NewOrchestrator(testGenerator, accountOpen, capital, rngSource,
+				nopAgentStore{}, nopRuntimeStore{}, nopLeaseAllocator{}, &nopWAL{},
+				nopActiveSessionStore{}, nil, nopSessionRunner{},
+				config, logger)
+			return err
+		}},
+		{"nil sessionRunner", func() error {
+			_, err := NewOrchestrator(testGenerator, accountOpen, capital, rngSource,
+				nopAgentStore{}, nopRuntimeStore{}, nopLeaseAllocator{}, &nopWAL{},
+				nopActiveSessionStore{}, generator.NoOpScenarioProvider{}, nil,
+				config, logger)
 			return err
 		}},
 	}
@@ -249,7 +400,7 @@ func TestNewOrchestratorRejectsInvalidConfig(t *testing.T) {
 
 	bad := completeOrchestratorConfig()
 	bad.PopulationSize = 0
-	_, err = NewOrchestrator(
+	_, err = newOrchestratorWithStubTail(
 		buildTestGenerator(t), accountOpen, capital,
 		NewFixedSeedSource(1, 2), bad, logger,
 	)
@@ -385,7 +536,7 @@ func mustBuildOrchestrator(t *testing.T, logger *slog.Logger) *Orchestrator {
 	config := completeOrchestratorConfig()
 	config.PopulationSize = 3
 
-	orchestrator, err := NewOrchestrator(
+	orchestrator, err := newOrchestratorWithStubTail(
 		buildTestGenerator(t),
 		accountOpen,
 		capital,

@@ -221,7 +221,7 @@ func (o *Orchestrator) subscribeLive(req BringUpRequest) error {
     return nil
 }
 
-Decisions. LoadSessions returns only per-agent success/fail; agent identity to the broker at order time = capital_handle (Tier 3). The live feed opens GET /v1/ws?session= (Tier-0): the WS binds via a session id, so L2 carries a FeedSessionID for the exchange's one feed (one WS per exchange). historyMarket selects the canonical source for on-demand (isolation). The WS ingest goroutine (one per exchange) outlives the join; SessionClosed handling is a Tier-6 teardown hook. Agent live transport = the human WebSocket (L2 is separate-process).
+Decisions. LoadSessions returns only per-agent success/fail; agent identity to the broker at order time = capital_handle (Tier 3). The live feed opens GET /v1/ws?session= (Tier-0): the WS binds via a session id, so L2 carries a FeedSessionID for the exchange's one feed (one WS per exchange). The subscribe batch on that one WS mixes stream kinds freely: one snapshot sub per instrument plus one candle sub per (instrument × configured timeframe). historyMarket selects the canonical source for on-demand (isolation). The WS ingest goroutine (one per exchange) outlives the join; SessionClosed handling is a Tier-6 teardown hook. Agent live transport = the human WebSocket (L2 is separate-process).
 
 Point 7 — Failure routing
 

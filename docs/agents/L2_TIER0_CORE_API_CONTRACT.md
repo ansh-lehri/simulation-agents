@@ -61,9 +61,9 @@ L2 use: 2c history pull → Redis. On-demand: market = the canonical market (bro
 2.7 GET /v1/ws?session=<session_id> — live feed (WebSocket)
 Open: GET /v1/ws?session=<session_id> (session id from §2.3; conductor resolves session→market→fanout). JSON text frames, anonymous otherwise.
 On connect: {"type":"connected","market","timezone"}.
-L2 sends: {"type":"subscribe","subs":[{"stream":"candle","instrument":"X","timeframe":"1m"},{"stream":"snapshot","instrument":"X"}]}
+L2 sends: {"type":"subscribe","subs":[{"stream":"candle","instrument":"X","timeframe":"1m"},{"stream":"snapshot","instrument":"X"}]} — the subscribe batch on the WS can mix stream kinds and multiple candle timeframes freely. One WS per exchange_id carries every subscription L2 needs: one snapshot sub per instrument plus one candle sub per (instrument × configured timeframe).
 L2 receives: ack (per-sub ok/error) · snapshot (phase, last_price, change_pct, quote, depth — whole-picture re-emit) · candle (finalized bars only, no forming bar).
-L2 use: 2c WS subscribe → Redis (candles append, quote overwrite). One WS per exchange (public data; use one session id for the exchange's feed). Live movement of the forming bar rides snapshot.last_price, not candle.
+L2 use: 2c WS subscribe → Redis (candles append per timeframe key, quote overwrite). One WS per exchange (public data; use one session id for the exchange's feed). Which candle timeframes ride the subscribe batch is a per-bring-up dial — the same list the history pull uses, any non-empty subset of {1m,5m,30m,60m}. Live movement of the forming bar rides snapshot.last_price, not candle.
 Known races (retry): subscribe nacks unknown instrument until that instrument has printed once on the tape; slow-client eviction has no backfill (re-fetch via §2.6 on reconnect).
 3. The o.core client (L2's single client to Core)
 

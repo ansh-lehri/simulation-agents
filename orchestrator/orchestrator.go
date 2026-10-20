@@ -7,6 +7,8 @@ import (
 	"math/rand/v2"
 
 	"simulation-agents/orchestrator/generator"
+	"simulation-agents/session"
+	"simulation-agents/store"
 	"simulation-agents/transport"
 )
 
@@ -39,27 +41,65 @@ type PopulationGenerator interface {
 // inbound trigger, assemble a Population through the generator, open
 // broker accounts for the newly minted agents, resolve each agent's
 // session trading capital, and hand off to the asynchronous tail that
-// persists, snapshots, and spawns the per-exchange run goroutine.
+// persists, snapshots, enlists, registers, and spawns the per-
+// exchange run goroutine.
 type Orchestrator struct {
 	generator      PopulationGenerator
 	accountOpen    *AccountOpenClient
 	capital        *CapitalResolver
 	rngSource      RNGSource
+
+	// Persistence surfaces the bring-up tail (continueBringUp)
+	// writes to. Each is a narrow store interface so a composition
+	// root can swap in a different backend without touching this
+	// package.
+	agentStore         store.AgentStore
+	runtimeStore       store.RuntimeStore
+	leaseAllocator     store.LeaseAllocator
+	pendingMintWAL     store.PendingMintWAL
+	activeSessionStore store.ActiveSessionStore
+
+	// scenarioProvider resolves on-demand scenarios the second time
+	// in the tail — once for the generator at Stage A, again here
+	// at Stage P5 to obtain the lifecycle curve_eff that rides into
+	// sessions:active. Both calls hit the same engine; the extra
+	// resolution avoids threading curveEff through the whole spine.
+	scenarioProvider generator.ScenarioProvider
+
+	// sessionRunner is the per-exchange run goroutine the tail
+	// spawns at the end of Stage P5. Held as an interface so a
+	// spy can replace it in orchestrator tests.
+	sessionRunner SessionRunner
+
+	// failureReporter is the surface the tail routes fatal
+	// errors through. Defaults to the orchestrator itself (its
+	// own FailBringUp / ReportReady methods satisfy the
+	// FailureReporter interface, verified at build by the
+	// compile-time witness in failure.go). Tests swap this field
+	// to a recording spy via replaceFailureReporterForTest.
+	failureReporter session.FailureReporter
+
 	config         OrchestratorConfig
 	logger         *slog.Logger
 	validScenarios map[string]struct{}
 }
 
 // NewOrchestrator wires an Orchestrator from its dependencies and
-// validates the config. Every dependency is required: a nil generator,
-// account-open client, capital resolver, rng source, or logger would
-// make the first bring-up panic deep in a call site that is harder to
-// debug than a clear startup error.
+// validates the config. Every dependency is required: a nil in any
+// of them would make the first bring-up panic deep in a call site
+// that is harder to debug than a clear startup error.
 func NewOrchestrator(
 	populationGenerator PopulationGenerator,
 	accountOpenClient *AccountOpenClient,
 	capitalResolver *CapitalResolver,
 	rngSource RNGSource,
+	agentStore store.AgentStore,
+	runtimeStore store.RuntimeStore,
+	leaseAllocator store.LeaseAllocator,
+	pendingMintWAL store.PendingMintWAL,
+	activeSessionStore store.ActiveSessionStore,
+	scenarioProvider generator.ScenarioProvider,
+	sessionRunner SessionRunner,
 	config OrchestratorConfig,
 	logger *slog.Logger,
 ) (*Orchestrator, error) {
@@ -75,6 +115,27 @@ func NewOrchestrator(
 	if rngSource == nil {
 		return nil, fmt.Errorf("orchestrator: rngSource is required")
 	}
+	if agentStore == nil {
+		return nil, fmt.Errorf("orchestrator: agentStore is required")
+	}
+	if runtimeStore == nil {
+		return nil, fmt.Errorf("orchestrator: runtimeStore is required")
+	}
+	if leaseAllocator == nil {
+		return nil, fmt.Errorf("orchestrator: leaseAllocator is required")
+	}
+	if pendingMintWAL == nil {
+		return nil, fmt.Errorf("orchestrator: pendingMintWAL is required")
+	}
+	if activeSessionStore == nil {
+		return nil, fmt.Errorf("orchestrator: activeSessionStore is required")
+	}
+	if scenarioProvider == nil {
+		return nil, fmt.Errorf("orchestrator: scenarioProvider is required")
+	}
+	if sessionRunner == nil {
+		return nil, fmt.Errorf("orchestrator: sessionRunner is required")
+	}
 	if logger == nil {
 		return nil, fmt.Errorf("orchestrator: logger is required")
 	}
@@ -85,15 +146,29 @@ func NewOrchestrator(
 	for _, scenarioName := range config.ValidScenarioNames {
 		validScenarios[scenarioName] = struct{}{}
 	}
-	return &Orchestrator{
-		generator:      populationGenerator,
-		accountOpen:    accountOpenClient,
-		capital:        capitalResolver,
-		rngSource:      rngSource,
-		config:         config,
-		logger:         logger,
-		validScenarios: validScenarios,
-	}, nil
+	built := &Orchestrator{
+		generator:          populationGenerator,
+		accountOpen:        accountOpenClient,
+		capital:            capitalResolver,
+		rngSource:          rngSource,
+		agentStore:         agentStore,
+		runtimeStore:       runtimeStore,
+		leaseAllocator:     leaseAllocator,
+		pendingMintWAL:     pendingMintWAL,
+		activeSessionStore: activeSessionStore,
+		scenarioProvider:   scenarioProvider,
+		sessionRunner:      sessionRunner,
+		config:             config,
+		logger:             logger,
+		validScenarios:     validScenarios,
+	}
+	// Self-reference: the orchestrator's own FailBringUp and
+	// ReportReady methods satisfy session.FailureReporter. Routing
+	// the tail's failure calls through this field (rather than
+	// directly on the receiver) is the single-line hook tests use
+	// to intercept the two methods without rewiring the orchestrator.
+	built.failureReporter = built
+	return built, nil
 }
 
 // BringUp is the inbound seam the transport layer calls. The signature

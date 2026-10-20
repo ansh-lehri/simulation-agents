@@ -38,7 +38,10 @@ bring-up flow (Phases 3/5) sequences them.
   re-runs being no-ops.
 - **No frozen traits in Redis**, no positions/cash/P&L in any Redis op.
 - **Market-data keyed by `exchange_id`** → canonical/on-demand isolation for free. L2 does
-  **no rollup** — `1m` only; serving any TF is the broker's job.
+  **no rollup** — each timeframe pulled cleanly from Core, never folded locally. Which
+  timeframes get populated is a per-bring-up config dial (any non-empty subset of
+  `{1m,5m,30m,60m}`); the store writes whichever ones the caller pulls, and serving a
+  timeframe that was NOT pulled is the broker's job.
 - **Lease:** `available` is a SET (native "take N"); `leased` a HASH (reverse-lookup). Select
   is **atomic** (Lua pop+mark) so concurrent on-demand sessions can't double-lease.
 - **WAL:** staged before account-open, cleared after the durable row is written.

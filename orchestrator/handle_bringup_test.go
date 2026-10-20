@@ -167,7 +167,7 @@ func newSpineHarness(t *testing.T) *spineHarness {
 	config := completeOrchestratorConfig()
 	config.PopulationSize = 10
 
-	orchestrator, err := NewOrchestrator(
+	orchestrator, err := newOrchestratorWithStubTail(
 		fakeGen,
 		accountOpen,
 		capital,
@@ -383,7 +383,7 @@ func TestSpineSurfacesAccountOpenError(t *testing.T) {
 	// Rebuild the orchestrator with the erroring account-open.
 	config := completeOrchestratorConfig()
 	config.PopulationSize = 10
-	orchestratorWithErr, err := NewOrchestrator(
+	orchestratorWithErr, err := newOrchestratorWithStubTail(
 		harness.fakeGenerator,
 		accountOpen,
 		harness.capital,
@@ -437,7 +437,7 @@ func TestSpineIsDeterministicUnderFixedSeed(t *testing.T) {
 		}
 		config := completeOrchestratorConfig()
 		config.PopulationSize = 5
-		orchestrator, err := NewOrchestrator(
+		orchestrator, err := newOrchestratorWithStubTail(
 			testGenerator, accountOpen, capital,
 			NewFixedSeedSource(99, 101),
 			config, discardLogger(),
