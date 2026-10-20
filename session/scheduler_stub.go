@@ -9,6 +9,7 @@ import (
 	"simulation-agents/transport"
 )
 
+
 // NoOpScheduler is the Scheduler implementation this phase ships. Its
 // StartScheduler logs the handoff and returns; the real tick loop
 // (the per-agent action phase + the lifecycle presence phase) lands
@@ -41,9 +42,11 @@ func (scheduler *NoOpScheduler) StartScheduler(
 	ctx context.Context,
 	request transport.BringUpRequest,
 	population generator.Population,
+	curveEffective *generator.CurveEffective,
 	lifecycleChannel chan<- LifecycleDecision,
 ) {
 	_ = ctx
+	_ = curveEffective
 	_ = lifecycleChannel
 	scheduler.logger.Info(
 		"scheduler stub reached (next phase replaces body)",
