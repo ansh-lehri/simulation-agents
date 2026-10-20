@@ -146,9 +146,7 @@ func (sched *LiveScheduler) runLoop(
 			lastAction = now
 		}
 		if now.Sub(lastPresence) >= sched.params.TPresence {
-			// Presence sweep implemented in Stage E.
-			_ = curves
-			_ = lifecycleChannel
+			sched.runPresencePhase(ctx, ws, curves, now, lifecycleChannel)
 			lastPresence = now
 		}
 
