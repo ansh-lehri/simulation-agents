@@ -1,20 +1,24 @@
 package session
 
-// LifecycleDecision is the message shape the tick loop will emit on
-// the lifecycle channel the orchestrator creates at spawn time. Its
-// field set lands in a later phase alongside the lifecycle presence
-// transitions it describes; this file pins the type name so the
-// handoff signature (Run and Scheduler.StartScheduler both carry a
-// chan<- LifecycleDecision) is stable from this stage onward.
+import "simulation-agents/agent"
+
+// LifecycleDecision is sent by the tick loop's presence sweep when an
+// agent reaches a transition that requires a durable write. The
+// orchestrator drains the channel and applies the consequence.
 //
-// Decide/write split: the Runner — through the scheduler — DECIDES a
-// presence transition and sends the decision on this channel. The
-// orchestrator reads the channel and WRITES the durable consequence.
-// The channel is the one seam that bridges the two actors across the
+// Decide/write split: the scheduler DECIDES the transition and sends
+// this message; the orchestrator WRITES the durable consequence
+// (Postgres retired_at today; Core account-close added in Tier 6).
+// The channel is the one seam bridging the two actors across the
 // bring-up spawn boundary.
 type LifecycleDecision struct {
-	// Fields land in the lifecycle-presence phase. Keeping the
-	// struct empty for now avoids locking a shape before the
-	// transition set is designed; the type's presence is enough to
-	// stabilize the handoff signatures.
+	AgentID agent.AgentID
+	Reason  string
 }
+
+// ReasonRetire is the only Reason the prototype sweep emits. It
+// signals that an agent has reached a for-good exit and its durable
+// row should be marked retired. The actual Core account-close that
+// pairs with it is wired in Tier 6; today the orchestrator drain
+// writes only Postgres.
+const ReasonRetire = "retire_for_good"
