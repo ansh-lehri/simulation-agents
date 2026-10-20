@@ -19,10 +19,9 @@ const (
 )
 
 // Hash field names inside the per-agent runtime hash. Lifted to constants
-// so key-scheme tests pin them literally and later writers (decision /
-// position working memory) reuse the same names without string drift.
-// Working-memory field names are intentionally not declared here — they
-// come with their writer design in a downstream stage.
+// so key-scheme tests pin them literally and all writers (presence,
+// timers, decision working memory, tip-following state) share a single
+// alphabet without string drift.
 const (
 	FieldTradingCapital = "trading_capital"
 	FieldIsTipper       = "is_tipper"
@@ -39,6 +38,34 @@ const (
 	// sees why.
 	FieldLoadStatus = "load_status"
 	FieldLoadError  = "load_error"
+
+	// Decision working-memory fields — the endogenous agent's
+	// in-tick opinion and trading posture, written by the decision
+	// logic on each presence-active turn.
+	FieldStandingOpinion     = "standing_opinion"
+	FieldStandingStance      = "standing_stance"
+	FieldWaitStreak          = "wait_streak"
+	FieldLastDecidedReadings = "last_decided_readings"
+
+	// Position working-memory fields — entry conditions of an open
+	// position, written when the agent enters and cleared on exit.
+	FieldPositionContext = "position_context"
+
+	// Tip-following state fields — herd agent's current tracking
+	// target and submission intent.
+	FieldLastActedTipID = "last_acted_tip_id"
+	FieldTracking       = "tracking"
+	FieldMyExitLevel    = "my_exit_level"
+	FieldSubmitAt       = "submit_at"
+
+	// Perception-gate reference fields — the last market readings the
+	// agent acted on, carried between ticks so the gate can tell
+	// whether conditions have shifted enough to warrant re-evaluation.
+	FieldGateRefPrice    = "gate_ref_price"
+	FieldGateRefSpread   = "gate_ref_spread"
+	FieldGateRefVolume   = "gate_ref_volume"
+	FieldGateRefRangePos = "gate_ref_range_pos"
+	FieldGateRefPhase    = "gate_ref_phase"
 )
 
 // LoadStatusFailed is the stored value for FieldLoadStatus when
