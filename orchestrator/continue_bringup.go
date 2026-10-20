@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"simulation-agents/agent"
+	"simulation-agents/orchestrator/generator"
 	"simulation-agents/session"
 	"simulation-agents/store"
 	"simulation-agents/transport"
@@ -73,9 +74,13 @@ func (orchestrator *Orchestrator) continueBringUp(
 		}
 	}
 
-	// P5 — register sessions:active and spawn the runner.
+	// P5 — resolve the scenario curve, register sessions:active,
+	// and spawn the runner. The curve is resolved once here so both
+	// the session-store record and the runner receive the same value
+	// without a second provider call.
+	curveEffective := orchestrator.resolveCurveEffective(request)
 	lifecycleChannel := make(chan session.LifecycleDecision, orchestrator.config.LifecycleBuffer)
-	if err := orchestrator.registerActiveSession(ctx, request); err != nil {
+	if err := orchestrator.registerActiveSession(ctx, request, curveEffective); err != nil {
 		orchestrator.failureReporter.FailBringUp(request, err)
 		return
 	}
@@ -88,7 +93,7 @@ func (orchestrator *Orchestrator) continueBringUp(
 	// Detach the runner from the request ctx: the inbound handler
 	// may have long since returned, but the session is only just
 	// going live.
-	go orchestrator.sessionRunner.Run(context.Background(), request, population, lifecycleChannel)
+	go orchestrator.sessionRunner.Run(context.Background(), request, population, curveEffective, lifecycleChannel)
 }
 
 // persistNewAgents inserts each freshly minted agent's durable row
@@ -196,27 +201,37 @@ func (orchestrator *Orchestrator) setOnDemandRuntimeTipper(
 	return nil
 }
 
-// registerActiveSession writes the per-exchange session params
-// under the sessions:active HASH. For a scenario-attached on-demand
-// bring-up it also resolves the lifecycle curve_eff via the scenario
-// provider (the generator consumed the trait-side half of the
-// scenario at Stage A; this is the second half) and writes it into
-// the record so a restart of the agent process rebuilds scenario-
-// shaped lifecycle curves rather than baseline ones.
+// resolveCurveEffective asks the scenario provider for the lifecycle
+// curve override for this bring-up. Returns nil for canonical sessions
+// and for on-demand sessions with no scenario — both map to baseline
+// lifecycle curves in the scheduler.
+func (orchestrator *Orchestrator) resolveCurveEffective(
+	request transport.BringUpRequest,
+) *generator.CurveEffective {
+	if request.SessionType != SessionTypeOnDemand || request.Scenario == "" {
+		return nil
+	}
+	_, curveEffective := orchestrator.scenarioProvider.Effective(request.Country, request.Scenario)
+	return curveEffective
+}
+
+// registerActiveSession writes the per-exchange session params under
+// the sessions:active HASH so a restarted process can rebuild the
+// session goroutines without a new bring-up request. The caller
+// resolves curveEffective before calling here so the same value is
+// also threaded into the runner without a second provider call.
 func (orchestrator *Orchestrator) registerActiveSession(
 	ctx context.Context,
 	request transport.BringUpRequest,
+	curveEffective *generator.CurveEffective,
 ) error {
 	var curveEffectiveSnapshot *store.CurveEffectiveSnapshot
-	if request.SessionType == SessionTypeOnDemand && request.Scenario != "" {
-		_, resolvedCurveEffective := orchestrator.scenarioProvider.Effective(request.Country, request.Scenario)
-		if resolvedCurveEffective != nil {
-			curveEffectiveSnapshot = &store.CurveEffectiveSnapshot{
-				EntryRate:   resolvedCurveEffective.EntryRate,
-				StepOutRate: resolvedCurveEffective.StepOutRate,
-				DoneRate:    resolvedCurveEffective.DoneRate,
-				ReentryRate: resolvedCurveEffective.ReentryRate,
-			}
+	if curveEffective != nil {
+		curveEffectiveSnapshot = &store.CurveEffectiveSnapshot{
+			EntryRate:   curveEffective.EntryRate,
+			StepOutRate: curveEffective.StepOutRate,
+			DoneRate:    curveEffective.DoneRate,
+			ReentryRate: curveEffective.ReentryRate,
 		}
 	}
 	record := store.ActiveSessionRecord{
