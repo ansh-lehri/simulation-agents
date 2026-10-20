@@ -17,6 +17,24 @@ type Params struct {
 	// tuning run with a longer lookback simply moves this dial.
 	HistoryLookback time.Duration
 
+	// HistoryTimeframes is the non-empty set of candle timeframes
+	// the pre-open history pull populates in Redis. Each entry
+	// must be one of the four Core-accepted timeframes: "1m",
+	// "5m", "30m", or "60m". The history pull issues one paged
+	// GetCandles sequence per (instrument × timeframe) and writes
+	// the result under the matching candles:{tf} key, so an agent
+	// reading a higher timeframe at tick time hits a pre-warmed
+	// cache rather than a broker round-trip. Serving a timeframe
+	// that this list does NOT include stays a broker-side concern
+	// (L2 does no local rollup).
+	//
+	// The live WebSocket stream carries 1m finalized bars only;
+	// the higher-timeframe caches stop being extended at
+	// session_start. Agents that need the latest bar at a higher
+	// timeframe either accept that staleness or ask the broker
+	// directly.
+	HistoryTimeframes []string
+
 	// LoadSessionsConcurrency bounds the fan-out of the per-agent
 	// session-install calls. The first-agent install runs
 	// synchronously to produce the live-feed session id; the
