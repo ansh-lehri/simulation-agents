@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"simulation-agents/store"
@@ -146,8 +147,135 @@ func TestWriteQuote_LastWriterWins(t *testing.T) {
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatalf("unmarshal quote: %v", err)
 	}
-	if decoded != second {
+	if !reflect.DeepEqual(decoded, second) {
 		t.Errorf("quote after overwrite: got %+v want %+v", decoded, second)
+	}
+}
+
+// ReadCandles with a limit smaller than the stored window returns only
+// the trailing `limit` bars in chronological order.
+func TestReadCandles_BoundedWindow(t *testing.T) {
+	client := openTestRedis(t)
+	ctx := context.Background()
+	marketStore := store.NewRedisMarketDataStore(client)
+
+	bars := []store.Candle{
+		makeCandle(1_700_000_000_000, 100, 110, 95, 105, 1000),
+		makeCandle(1_700_000_060_000, 105, 115, 100, 112, 1200),
+		makeCandle(1_700_000_120_000, 112, 120, 108, 118, 1500),
+		makeCandle(1_700_000_180_000, 118, 125, 115, 122, 1100),
+		makeCandle(1_700_000_240_000, 122, 130, 120, 128, 900),
+	}
+	if err := marketStore.WriteCandles(ctx, "ex-1", "ACME", "1m", bars); err != nil {
+		t.Fatalf("WriteCandles: %v", err)
+	}
+
+	got, err := marketStore.ReadCandles(ctx, "ex-1", "ACME", "1m", 3)
+	if err != nil {
+		t.Fatalf("ReadCandles: %v", err)
+	}
+	want := bars[2:]
+	if len(got) != len(want) {
+		t.Fatalf("candle count: got %d want %d", len(got), len(want))
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("candle %d: got %+v want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// ReadCandles with a limit larger than the stored window returns what
+// exists — no error, no padding.
+func TestReadCandles_ShortWindow(t *testing.T) {
+	client := openTestRedis(t)
+	ctx := context.Background()
+	marketStore := store.NewRedisMarketDataStore(client)
+
+	bars := []store.Candle{
+		makeCandle(1_700_000_000_000, 100, 110, 95, 105, 1000),
+		makeCandle(1_700_000_060_000, 105, 115, 100, 112, 1200),
+	}
+	if err := marketStore.WriteCandles(ctx, "ex-1", "ACME", "1m", bars); err != nil {
+		t.Fatalf("WriteCandles: %v", err)
+	}
+
+	got, err := marketStore.ReadCandles(ctx, "ex-1", "ACME", "1m", 100)
+	if err != nil {
+		t.Fatalf("ReadCandles: %v", err)
+	}
+	if len(got) != len(bars) {
+		t.Fatalf("candle count: got %d want %d", len(got), len(bars))
+	}
+}
+
+// ReadCandles on a key that has never been written returns an empty
+// slice — not an error.
+func TestReadCandles_AbsentKey(t *testing.T) {
+	client := openTestRedis(t)
+	ctx := context.Background()
+	marketStore := store.NewRedisMarketDataStore(client)
+
+	got, err := marketStore.ReadCandles(ctx, "ex-missing", "ACME", "1m", 50)
+	if err != nil {
+		t.Fatalf("ReadCandles on absent key: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty slice for absent key, got %d candles", len(got))
+	}
+}
+
+// ReadQuote returns the quote that was written and signals present=true.
+func TestReadQuote_Present(t *testing.T) {
+	client := openTestRedis(t)
+	ctx := context.Background()
+	marketStore := store.NewRedisMarketDataStore(client)
+
+	want := store.Quote{
+		BidPrice:  1000,
+		AskPrice:  1002,
+		BidQty:    50,
+		AskQty:    40,
+		Timestamp: 1_700_000_000_000,
+		LastPrice: 1001,
+		HasLast:   true,
+		Phase:     "open",
+		HasBid:    true,
+		HasAsk:    true,
+		Depth: store.QuoteDepth{
+			Bids: []store.QuoteLevel{{Price: 1000, Qty: 50}, {Price: 999, Qty: 30}},
+			Asks: []store.QuoteLevel{{Price: 1002, Qty: 40}},
+		},
+	}
+	if err := marketStore.WriteQuote(ctx, "ex-1", "ACME", want); err != nil {
+		t.Fatalf("WriteQuote: %v", err)
+	}
+
+	got, present, err := marketStore.ReadQuote(ctx, "ex-1", "ACME")
+	if err != nil {
+		t.Fatalf("ReadQuote: %v", err)
+	}
+	if !present {
+		t.Fatal("ReadQuote: expected present=true after write")
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ReadQuote: got %+v want %+v", got, want)
+	}
+}
+
+// ReadQuote on a key that has never been written returns present=false
+// with a zero Quote and no error.
+func TestReadQuote_Absent(t *testing.T) {
+	client := openTestRedis(t)
+	ctx := context.Background()
+	marketStore := store.NewRedisMarketDataStore(client)
+
+	got, present, err := marketStore.ReadQuote(ctx, "ex-missing", "ACME")
+	if err != nil {
+		t.Fatalf("ReadQuote on absent key: %v", err)
+	}
+	if present {
+		t.Errorf("ReadQuote: expected present=false for absent key, got quote %+v", got)
 	}
 }
 
