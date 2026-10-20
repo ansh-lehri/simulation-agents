@@ -25,8 +25,7 @@ type Params struct {
 	// the result under the matching candles:{tf} key, so an agent
 	// reading a higher timeframe at tick time hits a pre-warmed
 	// cache rather than a broker round-trip. Serving a timeframe
-	// that this list does NOT include stays a broker-side concern
-	// (L2 does no local rollup).
+	// that this list does NOT include stays a broker-side concern.
 	//
 	// The live WebSocket stream carries 1m finalized bars only;
 	// the higher-timeframe caches stop being extended at
@@ -56,6 +55,66 @@ type Params struct {
 	// should fail the pre-open rather than block the join
 	// indefinitely.
 	AckReadTimeout time.Duration
+
+	// TAction is the floor duration between action ticks. The
+	// scheduler sleeps at least this long between consecutive
+	// action phases; heavy ticks that exceed it chain immediately.
+	TAction time.Duration
+
+	// TPresence is the cadence of the presence-sweep phase.
+	// Significantly longer than TAction — lifecycle rolls happen
+	// on the order of minutes, not milliseconds.
+	TPresence time.Duration
+
+	// MaxLookbackK is the maximum number of candles the snapshot
+	// reads per instrument per action tick. Bounded to prevent a
+	// late-session read from consuming the entire accumulated
+	// history when only the recent trailing window is needed.
+	MaxLookbackK int
+
+	// PunchBuffer is the buffer depth of the dispatcher channel.
+	// Sized to absorb one action tick's worth of punches without
+	// blocking the action loop while the dispatcher is mid-send.
+	PunchBuffer int
+
+	// LifecycleCurve holds the baseline lifecycle-rate dials and
+	// curve-shape parameters for the presence sweep. A scenario's
+	// CurveEffective overrides only the three rates (step-out,
+	// done, re-entry); all shape parameters come from here.
+	LifecycleCurve LifecycleCurveParams
+}
+
+// LifecycleCurveParams carries the baseline lifecycle-rate dials and
+// curve-shape parameters used by the presence sweep. The three rate
+// fields (StepOutRate, DoneRate, ReentryRate) may be overridden by a
+// scenario's CurveEffective; all other fields are fixed for the
+// session regardless of scenario.
+type LifecycleCurveParams struct {
+	// The three heights that a scenario's CurveEffective may override.
+	StepOutRate  float64 // plateau height of the step-out intensity curve
+	DoneRate     float64 // peak height of the done-early intensity curve
+	ReentryRate  float64 // peak probability of the re-entry Gaussian
+
+	// Ramp shapes for the time-based curves; never scenario-shifted.
+	StepOutTauRamp float64 // τ_out: how quickly step-out intensity ramps up through the session
+	DoneTauRamp    float64 // τ_done: how quickly done-early intensity rises near session close
+
+	// RBF-kernel shape parameters for the Gaussian-process wiggle
+	// applied to each time-based curve; never scenario-shifted.
+	StepOutGPVariance    float64 // σ² of the GP riding the step-out curve
+	StepOutGPLengthScale float64 // length scale ℓ of the step-out GP
+	DoneGPVariance       float64 // σ² of the GP riding the done-early curve
+	DoneGPLengthScale    float64 // length scale ℓ of the done-early GP
+
+	// Re-entry Gaussian: mean and spread of the idle-duration at
+	// which the re-entry probability peaks.
+	ReentryMeanBreak  float64 // μ_break: idle seconds at which re-entry probability peaks
+	ReentrySigmaBreak float64 // σ_break: spread of the re-entry peak around μ_break
+
+	// Give-up complement: ceiling probability and the time-scale of
+	// the give-up sigmoid over idle duration.
+	GiveUpMax float64 // q_max: ceiling of the give-up probability
+	GiveUpTau float64 // τ_give_up: idle-duration time-scale of the give-up rise
 }
 
 // EntryCurveParams carries the dials for the inhomogeneous-Poisson
