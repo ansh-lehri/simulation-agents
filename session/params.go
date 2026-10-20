@@ -82,6 +82,13 @@ type Params struct {
 	// CurveEffective overrides only the three rates (step-out,
 	// done, re-entry); all shape parameters come from here.
 	LifecycleCurve LifecycleCurveParams
+
+	// CheckIntervalMin and CheckIntervalMax bound the random interval
+	// each agent waits between recurring lifecycle rolls. A fresh
+	// interval drawn uniformly from [min, max] is re-armed after every
+	// check. Zero values default to [20 min, 40 min].
+	CheckIntervalMin time.Duration
+	CheckIntervalMax time.Duration
 }
 
 // LifecycleCurveParams carries the baseline lifecycle-rate dials and
