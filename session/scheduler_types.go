@@ -75,6 +75,7 @@ type workingAgent struct {
 	presence       string  // one of store.PresenceDormant / Active / Idle / Done / Retired
 	entryTime      float64 // normalized [0,1]; DORMANT→ACTIVE trigger stamped by 2c
 	nextCheckTime  int64   // unix seconds; re-arm point for the recurring lifecycle check
+	lastCheckTime  int64   // unix seconds; previous check wall-clock, used to compute the elapsed Δ for rate→probability conversion
 	idleSince      int64   // unix seconds; set on step-out→IDLE; feeds re-entry and give-up rolls
 	memoryHandle   *RuntimeHandle
 }
