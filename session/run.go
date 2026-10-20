@@ -25,6 +25,7 @@ import (
 	"simulation-agents/transport"
 )
 
+
 // Runner is the per-exchange run goroutine body. One Runner value per
 // agent process; its Run method is called from exactly one goroutine
 // per bring-up spawn. Different (ctx, request) pairs may be running
@@ -104,6 +105,7 @@ func (runner *Runner) Run(
 	ctx context.Context,
 	request transport.BringUpRequest,
 	population generator.Population,
+	curveEffective *generator.CurveEffective,
 	lifecycleChannel chan<- LifecycleDecision,
 ) {
 	runner.dependencies.Logger.Info(
@@ -150,9 +152,9 @@ func (runner *Runner) Run(
 		return
 	}
 
-	// (6) scheduler handoff (stub this phase; the real tick loop
-	// replaces this call later with no caller change here)
-	runner.dependencies.Scheduler.StartScheduler(ctx, request, population, lifecycleChannel)
+	// (6) scheduler handoff; real tick loop body replaces the stub
+	// without any change here.
+	runner.dependencies.Scheduler.StartScheduler(ctx, request, population, curveEffective, lifecycleChannel)
 
 	// (7) ready
 	runner.dependencies.Failure.ReportReady(request)
