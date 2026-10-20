@@ -82,46 +82,6 @@ func TestNewRunnerRejectsNilDependencies(t *testing.T) {
 	}
 }
 
-// TestRunStubLogsHandoff pins the Stage-A behavior of Run: it logs
-// the handoff and returns. A later stage replaces the body; this
-// test's assertion that nothing else happens is the guardrail that
-// catches an accidental early implementation leaking in.
-func TestRunStubLogsHandoff(t *testing.T) {
-	t.Parallel()
-
-	var logSink strings.Builder
-	logger := slog.New(slog.NewTextHandler(&logSink, nil))
-	runner, err := NewRunner(Dependencies{
-		Core:       stubCoreClient{},
-		Runtime:    stubRuntimeStore{},
-		MarketData: stubMarketDataStore{},
-		Scheduler:  stubScheduler{},
-		Failure:    stubFailureReporter{},
-		Clock:      stubClock{},
-		RNGSource:  stubRNGSource{},
-		Params:     Params{EntryCurve: DefaultEntryCurveParams()},
-		Logger:     logger,
-	})
-	if err != nil {
-		t.Fatalf("NewRunner: %v", err)
-	}
-
-	lifecycleChannel := make(chan LifecycleDecision, 1)
-	runner.Run(
-		context.Background(),
-		transport.BringUpRequest{ExchangeID: "exch_1", SessionType: agent.PopulationCanonical},
-		generator.Population{},
-		lifecycleChannel,
-	)
-
-	if !strings.Contains(logSink.String(), "exch_1") {
-		t.Fatalf("Run must log the ExchangeID; got %q", logSink.String())
-	}
-	if !strings.Contains(logSink.String(), "stub reached") {
-		t.Fatalf("Run must log the handoff-stub marker; got %q", logSink.String())
-	}
-}
-
 // --- stubs: minimal implementations that let NewRunner's validation
 // pass and let Run execute without touching any real collaborator.
 // Each stub returns the zero value for every method it declares; a
