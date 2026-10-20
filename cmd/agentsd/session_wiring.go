@@ -66,6 +66,20 @@ func (adapter *sessionCoreClientAdapter) Subscribe(
 	return connection, connectedFrame, nil
 }
 
+func (adapter *sessionCoreClientAdapter) GetObservation(
+	ctx context.Context,
+	accountID string,
+) (core.AccountObservation, error) {
+	return adapter.inner.GetObservation(ctx, accountID)
+}
+
+func (adapter *sessionCoreClientAdapter) PunchOrder(
+	ctx context.Context,
+	request core.OrderPunchRequest,
+) error {
+	return adapter.inner.PunchOrder(ctx, request)
+}
+
 // orchestratorFailureReporterAdapter closes the dependency loop
 // between the session runner and the orchestrator: the runner
 // needs a FailureReporter at construction time, the orchestrator
