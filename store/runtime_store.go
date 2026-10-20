@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 
@@ -60,6 +61,18 @@ type Tracking struct {
 	NoticeAt      int64
 }
 
+// PerceptionRefs holds the last market readings an agent acted on. The
+// decision logic carries these between ticks so it can compare current
+// conditions against the previous observation and decide whether enough
+// has changed to warrant re-evaluating a stance.
+type PerceptionRefs struct {
+	LastPrice    int64
+	LastSpread   int64
+	LastVolume   int64
+	LastRangePos float64
+	LastPhase    string
+}
+
 // RuntimeStore writes the per-session Redis state. All methods are
 // write-on-change: a caller only invokes them when its decision changed
 // the stored value. The reader side (one-shot "load snapshot and
@@ -88,6 +101,35 @@ type RuntimeStore interface {
 	// SetTipper flags the agent as this session's tipper. Used only for
 	// on-demand (the canonical tipper is a static Postgres trait).
 	SetTipper(ctx context.Context, exchangeID string, agentID agent.AgentID) error
+
+	// SetStandingOpinion writes the agent's current directional opinion
+	// (a signed float in [-1, +1]) and its associated trading stance.
+	// Written on every tick the agent acts; not written when the agent
+	// passes its act-coin.
+	SetStandingOpinion(ctx context.Context, exchangeID string, agentID agent.AgentID, opinion float64, stance string) error
+
+	// SetWaitStreak writes how many consecutive ticks the agent has
+	// chosen to wait rather than act. Used by the decision logic to
+	// detect stale conviction and force a re-evaluation.
+	SetWaitStreak(ctx context.Context, exchangeID string, agentID agent.AgentID, streak int) error
+
+	// SetPositionContext writes the entry conditions of the agent's
+	// current open position. A nil positionContext clears the field,
+	// signalling that the agent is currently flat.
+	SetPositionContext(ctx context.Context, exchangeID string, agentID agent.AgentID, positionContext *PositionContext) error
+
+	// SetTipFollowState writes the full tip-following snapshot for a
+	// herd agent: the tracking target, the last tip it acted on, and
+	// its pre-computed exit and submission levels. All four are
+	// co-written atomically because they represent one coherent state.
+	SetTipFollowState(ctx context.Context, exchangeID string, agentID agent.AgentID, tracking *Tracking, lastActedTipID string, myExitLevel, submitAt int64) error
+
+	// SetPerceptionRefs writes the last market readings the agent
+	// used when it most recently formed or confirmed an opinion. The
+	// decision gate compares current readings against these stored
+	// refs to decide whether conditions have shifted enough to
+	// re-evaluate.
+	SetPerceptionRefs(ctx context.Context, exchangeID string, agentID agent.AgentID, refs PerceptionRefs) error
 }
 
 // RedisRuntimeStore is the Redis-backed RuntimeStore.
@@ -148,6 +190,79 @@ func (redisStore *RedisRuntimeStore) SetTipper(ctx context.Context, exchangeID s
 	key := RuntimeKey(exchangeID, agentID)
 	if err := redisStore.client.HSet(ctx, key, FieldIsTipper, IsTipperTrue).Err(); err != nil {
 		return fmt.Errorf("store: set is_tipper for %s on %s: %w", agentID, exchangeID, err)
+	}
+	return nil
+}
+
+func (redisStore *RedisRuntimeStore) SetStandingOpinion(ctx context.Context, exchangeID string, agentID agent.AgentID, opinion float64, stance string) error {
+	key := RuntimeKey(exchangeID, agentID)
+	err := redisStore.client.HSet(ctx, key,
+		FieldStandingOpinion, strconv.FormatFloat(opinion, 'f', -1, 64),
+		FieldStandingStance, stance,
+	).Err()
+	if err != nil {
+		return fmt.Errorf("store: set standing opinion for %s on %s: %w", agentID, exchangeID, err)
+	}
+	return nil
+}
+
+func (redisStore *RedisRuntimeStore) SetWaitStreak(ctx context.Context, exchangeID string, agentID agent.AgentID, streak int) error {
+	key := RuntimeKey(exchangeID, agentID)
+	if err := redisStore.client.HSet(ctx, key, FieldWaitStreak, strconv.Itoa(streak)).Err(); err != nil {
+		return fmt.Errorf("store: set wait streak for %s on %s: %w", agentID, exchangeID, err)
+	}
+	return nil
+}
+
+func (redisStore *RedisRuntimeStore) SetPositionContext(ctx context.Context, exchangeID string, agentID agent.AgentID, positionContext *PositionContext) error {
+	key := RuntimeKey(exchangeID, agentID)
+	var encoded string
+	if positionContext != nil {
+		raw, err := json.Marshal(positionContext)
+		if err != nil {
+			return fmt.Errorf("store: marshal position context for %s on %s: %w", agentID, exchangeID, err)
+		}
+		encoded = string(raw)
+	}
+	if err := redisStore.client.HSet(ctx, key, FieldPositionContext, encoded).Err(); err != nil {
+		return fmt.Errorf("store: set position context for %s on %s: %w", agentID, exchangeID, err)
+	}
+	return nil
+}
+
+func (redisStore *RedisRuntimeStore) SetTipFollowState(ctx context.Context, exchangeID string, agentID agent.AgentID, tracking *Tracking, lastActedTipID string, myExitLevel, submitAt int64) error {
+	key := RuntimeKey(exchangeID, agentID)
+	var trackingEncoded string
+	if tracking != nil {
+		raw, err := json.Marshal(tracking)
+		if err != nil {
+			return fmt.Errorf("store: marshal tracking for %s on %s: %w", agentID, exchangeID, err)
+		}
+		trackingEncoded = string(raw)
+	}
+	err := redisStore.client.HSet(ctx, key,
+		FieldTracking, trackingEncoded,
+		FieldLastActedTipID, lastActedTipID,
+		FieldMyExitLevel, strconv.FormatInt(myExitLevel, 10),
+		FieldSubmitAt, strconv.FormatInt(submitAt, 10),
+	).Err()
+	if err != nil {
+		return fmt.Errorf("store: set tip follow state for %s on %s: %w", agentID, exchangeID, err)
+	}
+	return nil
+}
+
+func (redisStore *RedisRuntimeStore) SetPerceptionRefs(ctx context.Context, exchangeID string, agentID agent.AgentID, refs PerceptionRefs) error {
+	key := RuntimeKey(exchangeID, agentID)
+	err := redisStore.client.HSet(ctx, key,
+		FieldGateRefPrice, strconv.FormatInt(refs.LastPrice, 10),
+		FieldGateRefSpread, strconv.FormatInt(refs.LastSpread, 10),
+		FieldGateRefVolume, strconv.FormatInt(refs.LastVolume, 10),
+		FieldGateRefRangePos, strconv.FormatFloat(refs.LastRangePos, 'f', -1, 64),
+		FieldGateRefPhase, refs.LastPhase,
+	).Err()
+	if err != nil {
+		return fmt.Errorf("store: set perception refs for %s on %s: %w", agentID, exchangeID, err)
 	}
 	return nil
 }
