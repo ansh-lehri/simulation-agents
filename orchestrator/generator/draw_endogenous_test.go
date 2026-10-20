@@ -111,7 +111,7 @@ func TestCoupleDietNoiseDominantHasNoMandatoryFlag(t *testing.T) {
 			sawFalseTimeOfSession = true
 		}
 	}
-	if !(sawFalseChart && sawFalseMeanReversion && sawFalseOrderBook && sawFalseVolume && sawFalseTimeOfSession) {
+	if !sawFalseChart || !sawFalseMeanReversion || !sawFalseOrderBook || !sawFalseVolume || !sawFalseTimeOfSession {
 		t.Fatalf("noise-dominant diet appears to force one of the five flags true: "+
 			"chart=%v meanrev=%v orderbook=%v volume=%v timeofsession=%v",
 			sawFalseChart, sawFalseMeanReversion, sawFalseOrderBook, sawFalseVolume, sawFalseTimeOfSession)
@@ -142,10 +142,10 @@ func TestCoupleDietOptionalFlagsVary(t *testing.T) {
 			sawFalseVolume = true
 		}
 	}
-	if !(sawTrueOrderBook && sawFalseOrderBook) {
+	if !sawTrueOrderBook || !sawFalseOrderBook {
 		t.Fatalf("order_book flag never varied across 200 seeds (coupling clone)")
 	}
-	if !(sawTrueVolume && sawFalseVolume) {
+	if !sawTrueVolume || !sawFalseVolume {
 		t.Fatalf("volume flag never varied across 200 seeds (coupling clone)")
 	}
 }
