@@ -597,6 +597,14 @@ func (fake *recordingMarketDataStore) WriteQuote(ctx context.Context, exchangeID
 	return nil
 }
 
+func (fake *recordingMarketDataStore) ReadCandles(_ context.Context, _, _, _ string, _ int) ([]store.Candle, error) {
+	return nil, nil
+}
+
+func (fake *recordingMarketDataStore) ReadQuote(_ context.Context, _, _ string) (store.Quote, bool, error) {
+	return store.Quote{}, false, nil
+}
+
 func (fake *recordingMarketDataStore) collectCandleWrites() []writeCandlesCall {
 	fake.callsMutex.Lock()
 	defer fake.callsMutex.Unlock()

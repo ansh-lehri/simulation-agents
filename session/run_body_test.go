@@ -513,6 +513,22 @@ func (fake *recordingRunRuntime) MarkSessionLoadFailed(ctx context.Context, exch
 	return nil
 }
 
+func (fake *recordingRunRuntime) SetStandingOpinion(_ context.Context, _ string, _ agent.AgentID, _ float64, _ string) error {
+	return nil
+}
+func (fake *recordingRunRuntime) SetWaitStreak(_ context.Context, _ string, _ agent.AgentID, _ int) error {
+	return nil
+}
+func (fake *recordingRunRuntime) SetPositionContext(_ context.Context, _ string, _ agent.AgentID, _ *store.PositionContext) error {
+	return nil
+}
+func (fake *recordingRunRuntime) SetTipFollowState(_ context.Context, _ string, _ agent.AgentID, _ *store.Tracking, _ string, _, _ int64) error {
+	return nil
+}
+func (fake *recordingRunRuntime) SetPerceptionRefs(_ context.Context, _ string, _ agent.AgentID, _ store.PerceptionRefs) error {
+	return nil
+}
+
 // Compile-time witness: the recording store satisfies both the
 // base store surface and session's narrow extension.
 var _ RuntimeStore = (*recordingRunRuntime)(nil)

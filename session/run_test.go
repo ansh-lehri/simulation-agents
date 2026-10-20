@@ -162,6 +162,22 @@ func (stubRuntimeStore) MarkSessionLoadFailed(ctx context.Context, exchangeID st
 	return nil
 }
 
+func (stubRuntimeStore) SetStandingOpinion(_ context.Context, _ string, _ agent.AgentID, _ float64, _ string) error {
+	return nil
+}
+func (stubRuntimeStore) SetWaitStreak(_ context.Context, _ string, _ agent.AgentID, _ int) error {
+	return nil
+}
+func (stubRuntimeStore) SetPositionContext(_ context.Context, _ string, _ agent.AgentID, _ *store.PositionContext) error {
+	return nil
+}
+func (stubRuntimeStore) SetTipFollowState(_ context.Context, _ string, _ agent.AgentID, _ *store.Tracking, _ string, _, _ int64) error {
+	return nil
+}
+func (stubRuntimeStore) SetPerceptionRefs(_ context.Context, _ string, _ agent.AgentID, _ store.PerceptionRefs) error {
+	return nil
+}
+
 type stubMarketDataStore struct{}
 
 func (stubMarketDataStore) WriteCandles(ctx context.Context, exchangeID, instrument, timeframe string, bars []store.Candle) error {
@@ -188,6 +204,14 @@ func (stubMarketDataStore) WriteQuote(ctx context.Context, exchangeID, instrumen
 	_ = instrument
 	_ = quote
 	return nil
+}
+
+func (stubMarketDataStore) ReadCandles(_ context.Context, _, _, _ string, _ int) ([]store.Candle, error) {
+	return nil, nil
+}
+
+func (stubMarketDataStore) ReadQuote(_ context.Context, _, _ string) (store.Quote, bool, error) {
+	return store.Quote{}, false, nil
 }
 
 type stubScheduler struct{}

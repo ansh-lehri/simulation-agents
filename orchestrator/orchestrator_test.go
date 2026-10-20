@@ -69,6 +69,21 @@ func (nopRuntimeStore) SetTipper(ctx context.Context, exchangeID string, agentID
 	_, _, _ = ctx, exchangeID, agentID
 	return nil
 }
+func (nopRuntimeStore) SetStandingOpinion(_ context.Context, _ string, _ agent.AgentID, _ float64, _ string) error {
+	return nil
+}
+func (nopRuntimeStore) SetWaitStreak(_ context.Context, _ string, _ agent.AgentID, _ int) error {
+	return nil
+}
+func (nopRuntimeStore) SetPositionContext(_ context.Context, _ string, _ agent.AgentID, _ *store.PositionContext) error {
+	return nil
+}
+func (nopRuntimeStore) SetTipFollowState(_ context.Context, _ string, _ agent.AgentID, _ *store.Tracking, _ string, _, _ int64) error {
+	return nil
+}
+func (nopRuntimeStore) SetPerceptionRefs(_ context.Context, _ string, _ agent.AgentID, _ store.PerceptionRefs) error {
+	return nil
+}
 
 type nopLeaseAllocator struct{}
 

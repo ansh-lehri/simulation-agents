@@ -509,6 +509,23 @@ func (fake *recordingRuntimeStore) SetTipper(ctx context.Context, exchangeID str
 	fake.tipperMutex.Unlock()
 	return nil
 }
+
+func (fake *recordingRuntimeStore) SetStandingOpinion(_ context.Context, _ string, _ agent.AgentID, _ float64, _ string) error {
+	return nil
+}
+func (fake *recordingRuntimeStore) SetWaitStreak(_ context.Context, _ string, _ agent.AgentID, _ int) error {
+	return nil
+}
+func (fake *recordingRuntimeStore) SetPositionContext(_ context.Context, _ string, _ agent.AgentID, _ *store.PositionContext) error {
+	return nil
+}
+func (fake *recordingRuntimeStore) SetTipFollowState(_ context.Context, _ string, _ agent.AgentID, _ *store.Tracking, _ string, _, _ int64) error {
+	return nil
+}
+func (fake *recordingRuntimeStore) SetPerceptionRefs(_ context.Context, _ string, _ agent.AgentID, _ store.PerceptionRefs) error {
+	return nil
+}
+
 func (fake *recordingRuntimeStore) lastTipperAgentID() string {
 	fake.tipperMutex.Lock()
 	defer fake.tipperMutex.Unlock()
