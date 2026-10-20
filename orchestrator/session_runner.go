@@ -28,6 +28,7 @@ type SessionRunner interface {
 		ctx context.Context,
 		request transport.BringUpRequest,
 		population generator.Population,
+		curveEffective *generator.CurveEffective,
 		lifecycleChannel chan<- session.LifecycleDecision,
 	)
 }
