@@ -22,24 +22,50 @@ type Candle struct {
 	CloseTime int64 `json:"close_time"`
 }
 
-// Quote is the latest bid/ask snapshot for one instrument on one
-// exchange. Prices in ticks, quantities in units, timestamp in unix
-// milliseconds. The quote key is overwrite-only — this struct carries
-// no history.
-type Quote struct {
-	BidPrice  int64 `json:"bid_price"`
-	AskPrice  int64 `json:"ask_price"`
-	BidQty    int64 `json:"bid_qty"`
-	AskQty    int64 `json:"ask_qty"`
-	Timestamp int64 `json:"timestamp"`
+// QuoteLevel is one price-quantity pair in the order-book depth snapshot.
+// Price is integer ticks; Qty is integer units.
+type QuoteLevel struct {
+	Price int64 `json:"price"`
+	Qty   int64 `json:"qty"`
 }
 
-// MarketDataStore writes the cached market-data window + latest quote.
-// This system is a pure consumer / cache — no rollup, no derived
-// timeframes. Which timeframes are populated is a caller-side
-// decision: the history pull reads a configured list from the subset
-// {1m, 5m, 30m, 60m} and writes each cleanly from Core. Serving a
-// timeframe that was NOT written here is the broker's job.
+// QuoteDepth carries the top-of-book depth for one instrument. Both slices
+// are in price-priority order as delivered by the live feed: bids descending,
+// asks ascending.
+type QuoteDepth struct {
+	Bids []QuoteLevel `json:"bids"`
+	Asks []QuoteLevel `json:"asks"`
+}
+
+// Quote is the latest market state for one instrument on one exchange.
+// Prices and quantities are integer (ticks / units); Timestamp is unix
+// milliseconds. The quote key is overwrite-only — this struct carries no
+// history.
+//
+// HasLast gates whether LastPrice is meaningful: a freshly started market
+// may not have printed a trade yet. HasBid and HasAsk gate the top-of-book
+// quantities; a market with no resting orders sets them false. Phase carries
+// the exchange's current trading phase (e.g. "open", "pre-open").
+type Quote struct {
+	BidPrice  int64      `json:"bid_price"`
+	AskPrice  int64      `json:"ask_price"`
+	BidQty    int64      `json:"bid_qty"`
+	AskQty    int64      `json:"ask_qty"`
+	Timestamp int64      `json:"timestamp"`
+	LastPrice int64      `json:"last_price"`
+	HasLast   bool       `json:"has_last"`
+	Phase     string     `json:"phase"`
+	HasBid    bool       `json:"has_bid"`
+	HasAsk    bool       `json:"has_ask"`
+	Depth     QuoteDepth `json:"depth"`
+}
+
+// MarketDataStore writes and reads the cached market-data window + latest
+// quote. This system is a pure consumer / cache — no rollup, no derived
+// timeframes. Which timeframes are populated is a caller-side decision:
+// the history pull reads a configured list from the subset {1m, 5m, 30m,
+// 60m} and writes each cleanly from Core. Serving a timeframe that was NOT
+// written here is the broker's job.
 type MarketDataStore interface {
 	// WriteCandles seeds the OHLCV window for one (exchange, instrument,
 	// timeframe) key. Replace semantics: the current list is dropped
@@ -54,6 +80,19 @@ type MarketDataStore interface {
 
 	// WriteQuote overwrites the latest-quote key. Last writer wins.
 	WriteQuote(ctx context.Context, exchangeID, instrument string, quote Quote) error
+
+	// ReadCandles returns the trailing window of at most limit bars for one
+	// (exchange, instrument, timeframe) key. Uses a bounded tail read so a
+	// late-session tick does not read the entire accumulated history. A short
+	// or absent list is not an error — callers treat it as a partial or empty
+	// window and degrade gracefully.
+	ReadCandles(ctx context.Context, exchangeID, instrument, timeframe string, limit int) ([]Candle, error)
+
+	// ReadQuote returns the latest cached quote for one (exchange, instrument)
+	// pair. The bool is false when the key is absent — the ingest goroutine may
+	// not have written it yet. A false present is not an error; callers treat
+	// the instrument as flat for this tick.
+	ReadQuote(ctx context.Context, exchangeID, instrument string) (Quote, bool, error)
 }
 
 // RedisMarketDataStore is the Redis-backed MarketDataStore.
@@ -118,4 +157,42 @@ func (marketStore *RedisMarketDataStore) WriteQuote(ctx context.Context, exchang
 		return fmt.Errorf("store: write quote for %s/%s: %w", exchangeID, instrument, err)
 	}
 	return nil
+}
+
+func (marketStore *RedisMarketDataStore) ReadCandles(ctx context.Context, exchangeID, instrument, timeframe string, limit int) ([]Candle, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	key := CandleKey(exchangeID, instrument, timeframe)
+	// LRANGE -limit -1 returns the last `limit` elements. When the list is
+	// shorter than limit, Redis returns what exists — no error, no padding.
+	raw, err := marketStore.client.LRange(ctx, key, int64(-limit), -1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("store: read candles for %s/%s/%s: %w", exchangeID, instrument, timeframe, err)
+	}
+	candles := make([]Candle, 0, len(raw))
+	for barIndex, encoded := range raw {
+		var bar Candle
+		if err := json.Unmarshal([]byte(encoded), &bar); err != nil {
+			return nil, fmt.Errorf("store: unmarshal candle %d for %s/%s/%s: %w", barIndex, exchangeID, instrument, timeframe, err)
+		}
+		candles = append(candles, bar)
+	}
+	return candles, nil
+}
+
+func (marketStore *RedisMarketDataStore) ReadQuote(ctx context.Context, exchangeID, instrument string) (Quote, bool, error) {
+	key := QuoteKey(exchangeID, instrument)
+	raw, err := marketStore.client.Get(ctx, key).Bytes()
+	if err == redis.Nil {
+		return Quote{}, false, nil
+	}
+	if err != nil {
+		return Quote{}, false, fmt.Errorf("store: read quote for %s/%s: %w", exchangeID, instrument, err)
+	}
+	var quote Quote
+	if err := json.Unmarshal(raw, &quote); err != nil {
+		return Quote{}, false, fmt.Errorf("store: unmarshal quote for %s/%s: %w", exchangeID, instrument, err)
+	}
+	return quote, true, nil
 }
