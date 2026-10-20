@@ -98,7 +98,7 @@ func TestRangeMethodLabelIsOneOfThreeFinalLabels(t *testing.T) {
 func TestVolumeMethodCarriesBaselineChoice(t *testing.T) {
 	params := completeGenParams()
 	sawMean, sawMedian := false, false
-	for seedCounter := uint64(0); seedCounter < 200 && !(sawMean && sawMedian); seedCounter++ {
+	for seedCounter := uint64(0); seedCounter < 200 && (!sawMean || !sawMedian); seedCounter++ {
 		rng := seededRNG(seedCounter, 45)
 		block := drawVolumeChannel(rng, 0.5, params)
 		switch block.Method {
@@ -110,7 +110,7 @@ func TestVolumeMethodCarriesBaselineChoice(t *testing.T) {
 			t.Fatalf("volume Method %q is neither mean nor median (seed %d)", block.Method, seedCounter)
 		}
 	}
-	if !(sawMean && sawMedian) {
+	if !sawMean || !sawMedian {
 		t.Fatalf("volume baseline coin never varied across 200 seeds: sawMean=%v sawMedian=%v", sawMean, sawMedian)
 	}
 }

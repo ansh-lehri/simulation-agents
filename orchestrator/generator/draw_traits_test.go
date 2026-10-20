@@ -38,7 +38,7 @@ func TestDrawTraitVectorKindFirstGating(t *testing.T) {
 	// Walk enough seeds to see both kinds. Herd probability is 0.1 in
 	// the complete-params helper so 400 seeds covers both branches with
 	// very high confidence.
-	for seedCounter := uint64(0); seedCounter < 400 && !(seenHerd && seenEndogenous); seedCounter++ {
+	for seedCounter := uint64(0); seedCounter < 400 && (!seenHerd || !seenEndogenous); seedCounter++ {
 		traits := drawTraitVector(seededRNG(seedCounter, 1), params, nil)
 
 		switch traits.AgentKind {
