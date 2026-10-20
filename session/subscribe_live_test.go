@@ -258,6 +258,14 @@ func (fake *programmableSubscribeCoreClient) GetCandles(ctx context.Context, req
 	return core.CandlesPage{}, nil
 }
 
+func (fake *programmableSubscribeCoreClient) GetObservation(_ context.Context, _ string) (core.AccountObservation, error) {
+	return core.AccountObservation{}, nil
+}
+
+func (fake *programmableSubscribeCoreClient) PunchOrder(_ context.Context, _ core.OrderPunchRequest) error {
+	return nil
+}
+
 // fakeWSConnection is a controllable WSConnection for both
 // subscribe_live and ingest tests. Tests push frames via
 // FeedFrame; Close signals ingest to exit. ReadFrame returns the

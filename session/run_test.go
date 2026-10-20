@@ -113,6 +113,14 @@ func (stubCoreClient) Subscribe(
 	return nil, core.ConnectedFrame{}, nil
 }
 
+func (stubCoreClient) GetObservation(_ context.Context, _ string) (core.AccountObservation, error) {
+	return core.AccountObservation{}, nil
+}
+
+func (stubCoreClient) PunchOrder(_ context.Context, _ core.OrderPunchRequest) error {
+	return nil
+}
+
 type stubRuntimeStore struct{}
 
 func (stubRuntimeStore) WriteInitialSnapshot(ctx context.Context, exchangeID string, agentRecord agent.Agent) error {
@@ -220,12 +228,10 @@ func (stubScheduler) StartScheduler(
 	ctx context.Context,
 	request transport.BringUpRequest,
 	population generator.Population,
+	curveEffective *generator.CurveEffective,
 	lifecycleChannel chan<- LifecycleDecision,
 ) {
-	_ = ctx
-	_ = request
-	_ = population
-	_ = lifecycleChannel
+	_, _, _, _, _ = ctx, request, population, curveEffective, lifecycleChannel
 }
 
 type stubFailureReporter struct{}

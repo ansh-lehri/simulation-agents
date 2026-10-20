@@ -138,9 +138,10 @@ func (nopSessionRunner) Run(
 	ctx context.Context,
 	request transport.BringUpRequest,
 	population generator.Population,
+	curveEffective *generator.CurveEffective,
 	lifecycleChannel chan<- session.LifecycleDecision,
 ) {
-	_, _, _, _ = ctx, request, population, lifecycleChannel
+	_, _, _, _, _ = ctx, request, population, curveEffective, lifecycleChannel
 }
 
 // newOrchestratorWithStubTail is the shared constructor every

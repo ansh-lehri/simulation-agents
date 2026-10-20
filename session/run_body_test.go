@@ -33,7 +33,7 @@ func TestRunHappyPath(t *testing.T) {
 	lifecycleChannel := make(chan LifecycleDecision, 1)
 
 	fixture.clock.release()
-	fixture.runner.Run(context.Background(), request, population, lifecycleChannel)
+	fixture.runner.Run(context.Background(), request, population, nil, lifecycleChannel)
 
 	if fixture.failure.failCount.Load() != 0 {
 		cause := fixture.failure.lastCause.Load()
@@ -73,7 +73,7 @@ func TestRunStartsSchedulerOnlyAfterWaitUntilReturns(t *testing.T) {
 
 	runReturned := make(chan struct{})
 	go func() {
-		fixture.runner.Run(context.Background(), request, population, make(chan LifecycleDecision, 1))
+		fixture.runner.Run(context.Background(), request, population, nil, make(chan LifecycleDecision, 1))
 		close(runReturned)
 	}()
 
@@ -117,7 +117,7 @@ func TestRunFatalWhenAllAgentsFailFeedSearch(t *testing.T) {
 	request := runHappyBringUpRequest([]string{"stock1"})
 
 	fixture.clock.release()
-	fixture.runner.Run(context.Background(), request, population, make(chan LifecycleDecision, 1))
+	fixture.runner.Run(context.Background(), request, population, nil, make(chan LifecycleDecision, 1))
 
 	if fixture.failure.failCount.Load() != 1 {
 		t.Fatalf("FailBringUp should be called exactly once; got %d", fixture.failure.failCount.Load())
@@ -150,7 +150,7 @@ func TestRunFatalWhenPullHistoryFails(t *testing.T) {
 	request := runHappyBringUpRequest([]string{"stock1"})
 
 	fixture.clock.release()
-	fixture.runner.Run(context.Background(), request, population, make(chan LifecycleDecision, 1))
+	fixture.runner.Run(context.Background(), request, population, nil, make(chan LifecycleDecision, 1))
 
 	if fixture.failure.failCount.Load() != 1 {
 		t.Fatalf("FailBringUp should be called exactly once on pullHistory failure; got %d",
@@ -175,7 +175,7 @@ func TestRunFatalWhenSubscribeLiveFails(t *testing.T) {
 	request := runHappyBringUpRequest([]string{"stock1"})
 
 	fixture.clock.release()
-	fixture.runner.Run(context.Background(), request, population, make(chan LifecycleDecision, 1))
+	fixture.runner.Run(context.Background(), request, population, nil, make(chan LifecycleDecision, 1))
 
 	if fixture.failure.failCount.Load() != 1 {
 		t.Fatalf("FailBringUp should be called exactly once on subscribeLive failure; got %d",
@@ -196,7 +196,7 @@ func TestRunFailsOnEmptyPopulation(t *testing.T) {
 
 	fixture := newRunFixture(t)
 	fixture.clock.release()
-	fixture.runner.Run(context.Background(), runHappyBringUpRequest([]string{"stock1"}), generator.Population{}, make(chan LifecycleDecision, 1))
+	fixture.runner.Run(context.Background(), runHappyBringUpRequest([]string{"stock1"}), generator.Population{}, nil, make(chan LifecycleDecision, 1))
 
 	if fixture.failure.failCount.Load() != 1 {
 		t.Fatalf("FailBringUp should be called once on empty population; got %d", fixture.failure.failCount.Load())
@@ -230,7 +230,7 @@ func TestRunPreOpenOpsRunConcurrently(t *testing.T) {
 	fixture.clock.release()
 
 	startedAt := time.Now()
-	fixture.runner.Run(context.Background(), request, population, make(chan LifecycleDecision, 1))
+	fixture.runner.Run(context.Background(), request, population, nil, make(chan LifecycleDecision, 1))
 	elapsed := time.Since(startedAt)
 
 	// Parallel budget: installFeedAgent (one JoinCanonical, no
@@ -267,7 +267,7 @@ func TestRunStampsEveryAgentBeforeAnyCoreCall(t *testing.T) {
 	}
 
 	fixture.clock.release()
-	fixture.runner.Run(context.Background(), runHappyBringUpRequest([]string{"stock1"}), population, make(chan LifecycleDecision, 1))
+	fixture.runner.Run(context.Background(), runHappyBringUpRequest([]string{"stock1"}), population, nil, make(chan LifecycleDecision, 1))
 
 	if fixture.failure.failCount.Load() != 0 {
 		t.Fatalf("unexpected FailBringUp")
@@ -450,6 +450,14 @@ func (fake *recordingRunCore) Subscribe(
 	return connection, core.ConnectedFrame{Market: "IN", Timezone: "UTC"}, nil
 }
 
+func (fake *recordingRunCore) GetObservation(_ context.Context, _ string) (core.AccountObservation, error) {
+	return core.AccountObservation{}, nil
+}
+
+func (fake *recordingRunCore) PunchOrder(_ context.Context, _ core.OrderPunchRequest) error {
+	return nil
+}
+
 // recordingRunRuntime captures StampEntryTime, SetPresence, and
 // MarkSessionLoadFailed call counts so the Run-body tests can
 // assert the ordering + DORMANT invariant.
@@ -550,10 +558,10 @@ func (fake *recordingRunScheduler) StartScheduler(
 	ctx context.Context,
 	request transport.BringUpRequest,
 	population generator.Population,
+	curveEffective *generator.CurveEffective,
 	lifecycleChannel chan<- LifecycleDecision,
 ) {
-	_ = ctx
-	_ = population
+	_, _, _ = ctx, population, curveEffective
 	_ = lifecycleChannel
 	fake.callCount.Add(1)
 	fake.observedExchangeID = request.ExchangeID

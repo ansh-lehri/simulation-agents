@@ -523,6 +523,14 @@ func (fake *programmableCoreClientForHistory) Subscribe(ctx context.Context, ses
 	return nil, core.ConnectedFrame{}, nil
 }
 
+func (fake *programmableCoreClientForHistory) GetObservation(_ context.Context, _ string) (core.AccountObservation, error) {
+	return core.AccountObservation{}, nil
+}
+
+func (fake *programmableCoreClientForHistory) PunchOrder(_ context.Context, _ core.OrderPunchRequest) error {
+	return nil
+}
+
 // recordingMarketDataStore captures every market-data write so a
 // test can assert on exchange_id, instrument, timeframe, and
 // payloads. All three ops are recorded in full — pullHistory tests

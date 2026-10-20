@@ -335,6 +335,14 @@ func (fake *programmableCoreClient) Subscribe(
 	return nil, core.ConnectedFrame{}, nil
 }
 
+func (fake *programmableCoreClient) GetObservation(_ context.Context, _ string) (core.AccountObservation, error) {
+	return core.AccountObservation{}, nil
+}
+
+func (fake *programmableCoreClient) PunchOrder(_ context.Context, _ core.OrderPunchRequest) error {
+	return nil
+}
+
 // recordingRuntimeStore captures MarkSessionLoadFailed calls and
 // counts them. All the other RuntimeStore methods delegate to the
 // zero-value stub so this fake does not have to re-implement them.
