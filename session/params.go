@@ -167,3 +167,35 @@ func DefaultEntryCurveParams() EntryCurveParams {
 		GridPoints:           64,
 	}
 }
+
+// DefaultLifecycleCurveParams returns baseline calibration for the
+// presence-sweep curves. All time values are in seconds. The
+// composition root may override any field; these values are starting
+// points consistent with the lifecycle design notes, not locked-in
+// production numbers.
+func DefaultLifecycleCurveParams() LifecycleCurveParams {
+	return LifecycleCurveParams{
+		// Rates — scenario-overridable
+		StepOutRate: 0.05,  // low: most active agents stay active per check
+		DoneRate:    0.04,  // low at open, spikes near close
+		ReentryRate: 0.70,  // peak per-check re-entry probability at μ_break
+
+		// Ramp shapes
+		StepOutTauRamp: 0.20, // step-out ramps up through ~20% of session
+		DoneTauRamp:    0.25, // done spikes in the final ~25% of session
+
+		// GP shape (RBF kernel) — never scenario-shifted
+		StepOutGPVariance:    0.25,
+		StepOutGPLengthScale: 0.15,
+		DoneGPVariance:       0.25,
+		DoneGPLengthScale:    0.15,
+
+		// Re-entry Gaussian (idle duration in seconds)
+		ReentryMeanBreak:  1200, // μ_break: 20 min typical break length
+		ReentrySigmaBreak: 480,  // σ_break: 8 min spread
+
+		// Give-up sigmoid
+		GiveUpMax: 0.80,
+		GiveUpTau: 1800, // τ_giveup: 30 min rise time past μ_break
+	}
+}
