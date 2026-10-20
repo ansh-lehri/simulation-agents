@@ -50,6 +50,19 @@ type CoreClient interface {
 		sessionID string,
 		subscriptions []core.MarketDataSubscription,
 	) (WSConnection, core.ConnectedFrame, error)
+
+	// GetObservation reads an agent's live own-state from Core:
+	// balance, open positions, working orders, and a tail of recent
+	// closed trades. Called inside decide() on the hot action-tick
+	// path; any error causes the agent to skip its action this tick.
+	GetObservation(ctx context.Context, accountID string) (core.AccountObservation, error)
+
+	// PunchOrder submits a trade order fire-and-forget. Core returns
+	// 202; this process ignores both the status and the order id.
+	// The order's live outcome is reconciled via GetObservation on a
+	// later tick. Errors are also ignored — a failed punch is treated
+	// as "status unknown" and reconciled the same way.
+	PunchOrder(ctx context.Context, request core.OrderPunchRequest) error
 }
 
 // WSConnection is the connection-handle shape the Runner consumes
@@ -101,6 +114,7 @@ type Scheduler interface {
 		ctx context.Context,
 		request transport.BringUpRequest,
 		population generator.Population,
+		curveEffective *generator.CurveEffective,
 		lifecycleChannel chan<- LifecycleDecision,
 	)
 }
