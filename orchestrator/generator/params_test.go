@@ -100,6 +100,9 @@ func completeGenParams() GenParams {
 
 		MaxHoldRange: IntRange{Low: 10, High: 600},
 
+		ThetaActRange:       NumericRange{Low: 0.3, High: 0.8},
+		ConfirmsNeededRange: IntRange{Low: 1, High: 2},
+
 		ChannelWeightsDirichletConcentration: 1,
 		TraitChannelSets: map[string][]string{
 			"trend":    {"chart", "volume"},
@@ -290,6 +293,31 @@ func TestValidateRejectsStructuralViolations(t *testing.T) {
 			name:          "trait channel set with empty channels",
 			mutate:        func(params *GenParams) { params.TraitChannelSets["trend"] = nil },
 			errorContains: "TraitChannelSets[\"trend\"]",
+		},
+		{
+			name:          "theta act range reversed",
+			mutate:        func(params *GenParams) { params.ThetaActRange = NumericRange{Low: 0.8, High: 0.3} },
+			errorContains: "ThetaActRange",
+		},
+		{
+			name:          "theta act range low below zero",
+			mutate:        func(params *GenParams) { params.ThetaActRange = NumericRange{Low: -0.1, High: 0.8} },
+			errorContains: "ThetaActRange",
+		},
+		{
+			name:          "theta act range high above one",
+			mutate:        func(params *GenParams) { params.ThetaActRange = NumericRange{Low: 0.3, High: 1.2} },
+			errorContains: "ThetaActRange",
+		},
+		{
+			name:          "confirms needed range low below one",
+			mutate:        func(params *GenParams) { params.ConfirmsNeededRange = IntRange{Low: 0, High: 2} },
+			errorContains: "ConfirmsNeededRange.Low",
+		},
+		{
+			name:          "confirms needed range reversed",
+			mutate:        func(params *GenParams) { params.ConfirmsNeededRange = IntRange{Low: 3, High: 1} },
+			errorContains: "ConfirmsNeededRange",
 		},
 	}
 
