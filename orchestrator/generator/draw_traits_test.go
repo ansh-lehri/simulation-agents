@@ -49,7 +49,8 @@ func TestDrawTraitVectorKindFirstGating(t *testing.T) {
 			}
 			if traits.Disposition != nil || traits.Diet != nil ||
 				traits.Rho != nil || traits.Phi != nil ||
-				traits.Exit != nil || traits.MaxHold != nil {
+				traits.Exit != nil || traits.MaxHold != nil ||
+				traits.ThetaAct != nil || traits.NeedsConfirm != nil || traits.ConfirmsNeeded != nil {
 				t.Fatalf("herd agent carries endogenous-only fields (seed %d): %+v",
 					seedCounter, traits)
 			}
@@ -64,7 +65,8 @@ func TestDrawTraitVectorKindFirstGating(t *testing.T) {
 			if traits.Disposition == nil || traits.Diet == nil ||
 				traits.Rho == nil || traits.Phi == nil ||
 				traits.Perception == nil ||
-				traits.Exit == nil || traits.MaxHold == nil {
+				traits.Exit == nil || traits.MaxHold == nil ||
+				traits.ThetaAct == nil || traits.NeedsConfirm == nil || traits.ConfirmsNeeded == nil {
 				t.Fatalf("endogenous agent missing an endogenous field (seed %d): %+v",
 					seedCounter, traits)
 			}
@@ -110,6 +112,140 @@ func TestDrawTraitVectorUniversalRanges(t *testing.T) {
 		if traits.Phi != nil && (*traits.Phi < -1 || *traits.Phi > 1) {
 			t.Fatalf("Phi out of [-1,1]: got %v (seed %d)", *traits.Phi, seedCounter)
 		}
+	}
+}
+
+// TestCommitGateTraitsDoNotShiftExistingRNGStream is the stream-position
+// regression test. It verifies that appending the three commit-gate draws at
+// the tail of the endogenous block did not shift any earlier RNG consumption.
+// The golden values below were captured from the draw sequence immediately
+// before the commit-gate calls were wired in, using seed (1, 2). If any
+// draw ever migrates to a position before these fields, their values under
+// the same seed will change and this test will catch it.
+func TestCommitGateTraitsDoNotShiftExistingRNGStream(t *testing.T) {
+	params := completeGenParams()
+	traits := drawTraitVector(seededRNG(1, 2), params, nil)
+
+	if traits.AgentKind != agent.AgentKindEndogenous {
+		t.Fatalf("seed (1,2) must produce endogenous agent for this regression; got %q", traits.AgentKind)
+	}
+
+	const (
+		wantSkill          = 0.747845983203399
+		wantAggressiveness = 0.2705747266307922
+		wantCapitalSize    = int64(45522)
+		wantPnlReactivity  = 0.5459759778559633
+		wantPAct           = 0.13203270231769387
+		wantRho            = 0.6714620348425524
+		wantPhi            = -0.1764829152785783
+		wantMaxHold        = 234
+	)
+
+	if traits.Skill != wantSkill {
+		t.Errorf("Skill shifted: got %v, want %v", traits.Skill, wantSkill)
+	}
+	if traits.Aggressiveness != wantAggressiveness {
+		t.Errorf("Aggressiveness shifted: got %v, want %v", traits.Aggressiveness, wantAggressiveness)
+	}
+	if traits.CapitalSize != wantCapitalSize {
+		t.Errorf("CapitalSize shifted: got %v, want %v", traits.CapitalSize, wantCapitalSize)
+	}
+	if traits.PnlReactivity != wantPnlReactivity {
+		t.Errorf("PnlReactivity shifted: got %v, want %v", traits.PnlReactivity, wantPnlReactivity)
+	}
+	if traits.PAct != wantPAct {
+		t.Errorf("PAct shifted: got %v, want %v", traits.PAct, wantPAct)
+	}
+	if traits.Rho == nil || *traits.Rho != wantRho {
+		t.Errorf("Rho shifted: got %v, want %v", traits.Rho, wantRho)
+	}
+	if traits.Phi == nil || *traits.Phi != wantPhi {
+		t.Errorf("Phi shifted: got %v, want %v", traits.Phi, wantPhi)
+	}
+	if traits.MaxHold == nil || *traits.MaxHold != wantMaxHold {
+		t.Errorf("MaxHold shifted: got %v, want %v", traits.MaxHold, wantMaxHold)
+	}
+
+	// Confirm the new fields are also present and non-nil (wired correctly).
+	if traits.ThetaAct == nil {
+		t.Error("ThetaAct is nil — commit-gate draws were not wired")
+	}
+	if traits.NeedsConfirm == nil {
+		t.Error("NeedsConfirm is nil — commit-gate draws were not wired")
+	}
+	if traits.ConfirmsNeeded == nil {
+		t.Error("ConfirmsNeeded is nil — commit-gate draws were not wired")
+	}
+}
+
+// TestDrawTraitVectorIncludesCommitGateTraits confirms endogenous agents carry
+// all three non-nil commit-gate fields, and herd agents carry none of them.
+func TestDrawTraitVectorIncludesCommitGateTraits(t *testing.T) {
+	params := completeGenParams()
+
+	seenHerd := false
+	seenEndogenous := false
+
+	for seedCounter := uint64(0); seedCounter < 400 && (!seenHerd || !seenEndogenous); seedCounter++ {
+		traits := drawTraitVector(seededRNG(seedCounter, 61), params, nil)
+
+		switch traits.AgentKind {
+		case agent.AgentKindHerd:
+			seenHerd = true
+			if traits.ThetaAct != nil {
+				t.Fatalf("herd agent carries ThetaAct (seed %d)", seedCounter)
+			}
+			if traits.NeedsConfirm != nil {
+				t.Fatalf("herd agent carries NeedsConfirm (seed %d)", seedCounter)
+			}
+			if traits.ConfirmsNeeded != nil {
+				t.Fatalf("herd agent carries ConfirmsNeeded (seed %d)", seedCounter)
+			}
+		case agent.AgentKindEndogenous:
+			seenEndogenous = true
+			if traits.ThetaAct == nil {
+				t.Fatalf("endogenous agent missing ThetaAct (seed %d)", seedCounter)
+			}
+			if traits.NeedsConfirm == nil {
+				t.Fatalf("endogenous agent missing NeedsConfirm (seed %d)", seedCounter)
+			}
+			if traits.ConfirmsNeeded == nil {
+				t.Fatalf("endogenous agent missing ConfirmsNeeded (seed %d)", seedCounter)
+			}
+		}
+	}
+
+	if !seenHerd {
+		t.Fatal("never saw a herd agent across 400 seeds")
+	}
+	if !seenEndogenous {
+		t.Fatal("never saw an endogenous agent across 400 seeds")
+	}
+}
+
+// TestConfirmsNeededAlwaysDrawn verifies the unconditional-draw invariant:
+// ConfirmsNeeded must be non-nil even on endogenous agents where
+// NeedsConfirm is false (immediate actors). Skipping the draw conditionally
+// would make the RNG stream length depend on a prior draw's outcome.
+func TestConfirmsNeededAlwaysDrawn(t *testing.T) {
+	params := completeGenParams()
+
+	immediateSeen := false
+	for seedCounter := uint64(0); seedCounter < 2000; seedCounter++ {
+		traits := drawTraitVector(seededRNG(seedCounter, 63), params, nil)
+		if traits.AgentKind != agent.AgentKindEndogenous {
+			continue
+		}
+		if traits.NeedsConfirm != nil && !*traits.NeedsConfirm {
+			immediateSeen = true
+			if traits.ConfirmsNeeded == nil {
+				t.Fatalf("immediate actor (NeedsConfirm=false) has nil ConfirmsNeeded (seed %d) — draw must be unconditional",
+					seedCounter)
+			}
+		}
+	}
+	if !immediateSeen {
+		t.Fatal("never saw an immediate actor across 2000 seeds — check NeedsConfirm coin")
 	}
 }
 
