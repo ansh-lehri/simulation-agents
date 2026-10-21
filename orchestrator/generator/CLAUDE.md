@@ -56,7 +56,7 @@ each minted agent a fully-drawn frozen trait vector.
 - **Distribution FAMILIES locked; VALUES are calibration** (in `GenParams`), never hardcoded.
 
 ## Do NOT
-- Do NOT populate `theta_add` — RESERVED, not designed (blocked on `theta_act`). Leave it out.
+- Do NOT add `theta_add` as a trait — it is runtime-derived in 4d as `theta_act + margin` (a `decision.Params` global), never stored. `ThetaAct`, `NeedsConfirm`, and `ConfirmsNeeded` are the three commit-gate traits; they are drawn at the tail of the endogenous block, after `max_hold`.
 - Do NOT finalize `channel_weights` contents without the channel→trait map (config still owed,
   per PERCEPTION_PROFILE_GENERATION §12 / Tier-1 §7) — build the Dirichlet mechanism over a
   trait's channel set; the per-trait channel sets are a placeholder to fill at calibration.

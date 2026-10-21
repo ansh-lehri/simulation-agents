@@ -29,7 +29,7 @@ leaf package with no I/O and no deps on store/core/orchestrator. Everyone import
   enforced by code, not a DB constraint.
 - **Tier-4 trait fields (`rho`, `phi`, `perception_profile`, `exit_profile`, `max_hold`) are
   DEFINED here as shape** (Tier 1 persists them) but their VALUES are drawn in generation
-  (Phase 3). `theta_add` stays reserved/commented — not populated (blocked on `theta_act`).
+  (Phase 3). `ThetaAct`, `NeedsConfirm`, and `ConfirmsNeeded` are endogenous-only pointer fields drawn at generation. `theta_add` is not a trait — it is runtime-derived in 4d as `theta_act + margin` and has no field in this struct.
 
 ## Do NOT
 - No I/O, no store calls, no RNG beyond the injected seeded source in `drawTradingCapital`.
