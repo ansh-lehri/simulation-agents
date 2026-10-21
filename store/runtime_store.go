@@ -124,12 +124,13 @@ type RuntimeStore interface {
 	// co-written atomically because they represent one coherent state.
 	SetTipFollowState(ctx context.Context, exchangeID string, agentID agent.AgentID, tracking *Tracking, lastActedTipID string, myExitLevel, submitAt int64) error
 
-	// SetPerceptionRefs writes the last market readings the agent
-	// used when it most recently formed or confirmed an opinion. The
-	// decision gate compares current readings against these stored
-	// refs to decide whether conditions have shifted enough to
-	// re-evaluate.
-	SetPerceptionRefs(ctx context.Context, exchangeID string, agentID agent.AgentID, refs PerceptionRefs) error
+	// SetPerceptionRefs writes the last market readings the agent used when
+	// it most recently ran perception for the given instrument. Stored as a
+	// per-instrument JSON blob so agents with multiple instruments never
+	// have their refs collide. The perception gate compares current readings
+	// against these stored refs to decide whether enough has changed to
+	// warrant re-running perception.
+	SetPerceptionRefs(ctx context.Context, exchangeID string, agentID agent.AgentID, instrument string, refs PerceptionRefs) error
 }
 
 // RedisRuntimeStore is the Redis-backed RuntimeStore.
@@ -252,17 +253,14 @@ func (redisStore *RedisRuntimeStore) SetTipFollowState(ctx context.Context, exch
 	return nil
 }
 
-func (redisStore *RedisRuntimeStore) SetPerceptionRefs(ctx context.Context, exchangeID string, agentID agent.AgentID, refs PerceptionRefs) error {
+func (redisStore *RedisRuntimeStore) SetPerceptionRefs(ctx context.Context, exchangeID string, agentID agent.AgentID, instrument string, refs PerceptionRefs) error {
 	key := RuntimeKey(exchangeID, agentID)
-	err := redisStore.client.HSet(ctx, key,
-		FieldGateRefPrice, strconv.FormatInt(refs.LastPrice, 10),
-		FieldGateRefSpread, strconv.FormatInt(refs.LastSpread, 10),
-		FieldGateRefVolume, strconv.FormatInt(refs.LastVolume, 10),
-		FieldGateRefRangePos, strconv.FormatFloat(refs.LastRangePos, 'f', -1, 64),
-		FieldGateRefPhase, refs.LastPhase,
-	).Err()
+	encoded, err := json.Marshal(refs)
 	if err != nil {
-		return fmt.Errorf("store: set perception refs for %s on %s: %w", agentID, exchangeID, err)
+		return fmt.Errorf("store: marshal perception refs for %s/%s on %s: %w", agentID, instrument, exchangeID, err)
+	}
+	if err := redisStore.client.HSet(ctx, key, GateRefsField(instrument), string(encoded)).Err(); err != nil {
+		return fmt.Errorf("store: set perception refs for %s/%s on %s: %w", agentID, instrument, exchangeID, err)
 	}
 	return nil
 }
