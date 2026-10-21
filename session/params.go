@@ -1,6 +1,10 @@
 package session
 
-import "time"
+import (
+	"time"
+
+	"simulation-agents/decision"
+)
 
 // Params carries the Runner's calibration and operational dials. These
 // are composition-root concerns; this struct is the carrier, not a
@@ -85,6 +89,12 @@ type Params struct {
 	// blocking the action loop while the dispatcher is mid-send.
 	PunchBuffer int
 
+	// Perception carries the two calibration dials for agent signal
+	// computation: the noise sigma (scaled by each agent's skill) and the
+	// MA saturation multiple. Applied uniformly to every Perceive call
+	// during the action tick; calibration-only — no logic lives here.
+	Perception decision.PerceptionParams
+
 	// LifecycleCurve holds the baseline lifecycle-rate dials and
 	// curve-shape parameters for the presence sweep. A scenario's
 	// CurveEffective overrides only the three rates (step-out,
@@ -130,6 +140,19 @@ type LifecycleCurveParams struct {
 	// the give-up sigmoid over idle duration.
 	GiveUpMax float64 // q_max: ceiling of the give-up probability
 	GiveUpTau float64 // τ_give_up: idle-duration time-scale of the give-up rise
+}
+
+// DefaultPerceptionParams returns the baseline calibration for agent
+// perception signal computation. SigmaPerc=0.05 gives each agent a 5%
+// noise envelope scaled by (1−skill), so perfect-skill agents see no
+// noise while low-skill agents have meaningful variation.
+// MASaturationMultiple=2.0 means a moving-average spread at 2× the
+// flat-band threshold maps to maximum chart strength (clamps to 1.0).
+func DefaultPerceptionParams() decision.PerceptionParams {
+	return decision.PerceptionParams{
+		SigmaPerc:            0.05,
+		MASaturationMultiple: 2.0,
+	}
 }
 
 // EntryCurveParams carries the dials for the inhomogeneous-Poisson
