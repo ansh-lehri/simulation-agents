@@ -7,6 +7,7 @@ import (
 
 	"simulation-agents/agent"
 	"simulation-agents/core"
+	"simulation-agents/decision"
 	"simulation-agents/store"
 )
 
@@ -59,8 +60,18 @@ func (handle *RuntimeHandle) SetTipFollowState(
 	)
 }
 
-func (handle *RuntimeHandle) SetPerceptionRefs(refs store.PerceptionRefs) error {
-	return handle.runtimeStore.SetPerceptionRefs(handle.ctx, handle.exchangeID, handle.agentID, refs)
+func (handle *RuntimeHandle) SetPerceptionRefs(instrument string, refs store.PerceptionRefs) error {
+	return handle.runtimeStore.SetPerceptionRefs(handle.ctx, handle.exchangeID, handle.agentID, instrument, refs)
+}
+
+// instrumentMemory tracks the last perception state for one instrument
+// an agent watches. The gate logic compares current market readings
+// against stored refs to decide whether to rerun perception; lastBundle
+// caches the most recently computed output so the agent can reference
+// it without recomputing on unchanged ticks.
+type instrumentMemory struct {
+	refs       store.PerceptionRefs
+	lastBundle *decision.PerceptionBundle
 }
 
 // workingAgent is one agent's in-memory state for the duration of a
@@ -78,6 +89,8 @@ type workingAgent struct {
 	lastCheckTime  int64   // unix seconds; previous check wall-clock, used to compute the elapsed Δ for rate→probability conversion
 	idleSince      int64   // unix seconds; set on step-out→IDLE; feeds re-entry and give-up rolls
 	memoryHandle   *RuntimeHandle
+	agentRNG       *rand.Rand                    // independent per-agent randomness stream, seeded from the session RNG at build time
+	perception     map[string]*instrumentMemory  // per-instrument perception working memory; keyed by instrument symbol
 }
 
 // workingSet is the full in-memory authority for one exchange session.
@@ -98,10 +111,10 @@ type workingSet struct {
 
 // snapshotView holds one action tick's raw market-data reads for all
 // instruments in the session. Loaded once per tick via the bounded
-// Redis reads and shared across every agent that ticks. The Tier-4
-// read accessor wraps this for per-agent signal extraction.
+// Redis reads and shared across every agent that ticks. The decision
+// accessor wraps this for per-agent signal extraction.
 type snapshotView struct {
-	candles map[string][]store.Candle
+	candles map[string]map[string][]store.Candle // instrument → timeframe → bars
 	quote   map[string]store.Quote
 	present map[string]bool // false when the quote key is absent in Redis
 }
@@ -132,16 +145,18 @@ type lifecycleCurves struct {
 	giveUpProb func(idleDuration float64) float64
 }
 
-// decideInput is the three-part seam handed to decide() for each
-// active agent whose act-coin fires. Tier-3 assembles it; Tier-4
-// fills the decide() body. The three parts are: the agent's frozen
-// traits and bound working-memory handle, the shared raw market
-// snapshot for this tick, and a bound fresh-read accessor for the
-// agent's live own-state from Core.
+// decideInput is the four-part seam handed to decide() for each
+// active agent whose act-coin fires. The action phase assembles it;
+// the decide() body fills the perception and decision logic.
+// Parts: the agent's traits and working-memory handle; the shared
+// raw market snapshot; a bound fresh-read accessor for the agent's
+// live own-state from Core; and the tick timing for building the
+// market-data accessor.
 type decideInput struct {
 	agentState *workingAgent
 	market     *snapshotView
 	observe    func() (core.AccountObservation, error)
+	tick       decision.TickContext
 }
 
 // decide is the Tier-4 seam stub. The action phase calls it once per
