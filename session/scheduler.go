@@ -3,10 +3,12 @@ package session
 import (
 	"context"
 	"log/slog"
+	"math/rand/v2"
 	"time"
 
 	"simulation-agents/agent"
 	"simulation-agents/core"
+	"simulation-agents/decision"
 	"simulation-agents/orchestrator/generator"
 	"simulation-agents/store"
 	"simulation-agents/transport"
@@ -94,6 +96,7 @@ func (sched *LiveScheduler) buildWorkingSet(
 	allAgents := population.All()
 	agents := make(map[agent.AgentID]*workingAgent, len(allAgents))
 	for _, agentRecord := range allAgents {
+		agentRNG := rand.New(rand.NewPCG(sessionRNG.Uint64(), sessionRNG.Uint64()))
 		agents[agentRecord.ID] = &workingAgent{
 			traits:         agentRecord.Traits,
 			capitalHandle:  agentRecord.CapitalHandle,
@@ -101,6 +104,8 @@ func (sched *LiveScheduler) buildWorkingSet(
 			presence:       store.PresenceDormant,
 			entryTime:      entryCurve.DrawEntryFraction(sessionRNG),
 			memoryHandle:   newRuntimeHandle(sched.runtime, ctx, request.ExchangeID, agentRecord.ID),
+			agentRNG:       agentRNG,
+			perception:     make(map[string]*instrumentMemory),
 		}
 	}
 
@@ -130,6 +135,7 @@ func (sched *LiveScheduler) runLoop(
 	lifecycleChannel chan<- LifecycleDecision,
 ) {
 	var lastAction, lastPresence time.Time
+	var tickIndex int64
 	for {
 		select {
 		case <-ctx.Done():
@@ -142,8 +148,15 @@ func (sched *LiveScheduler) runLoop(
 
 		now := time.Now()
 		if now.Sub(lastAction) >= sched.params.TAction {
-			sched.runActionPhase(ctx, ws, punchCh)
+			tick := decision.TickContext{
+				Now:          now,
+				SessionStart: ws.sessionStart,
+				SessionEnd:   ws.sessionEnd,
+				TickIndex:    tickIndex,
+			}
+			sched.runActionPhase(ctx, ws, punchCh, tick)
 			lastAction = now
+			tickIndex++
 		}
 		if now.Sub(lastPresence) >= sched.params.TPresence {
 			sched.runPresencePhase(ctx, ws, curves, now, lifecycleChannel)
@@ -172,7 +185,7 @@ func (sched *LiveScheduler) runLoop(
 // The resulting batch is seeded-shuffled and forwarded to the dispatcher
 // channel non-blocking — a full channel drops the order rather than
 // stalling the tick.
-func (sched *LiveScheduler) runActionPhase(ctx context.Context, ws *workingSet, punchCh chan core.OrderPunchRequest) {
+func (sched *LiveScheduler) runActionPhase(ctx context.Context, ws *workingSet, punchCh chan core.OrderPunchRequest, tick decision.TickContext) {
 	view := sched.snapshot(ctx, ws)
 	batch := make([]core.OrderPunchRequest, 0, len(ws.active))
 	for _, agentRecord := range ws.active {
@@ -186,6 +199,7 @@ func (sched *LiveScheduler) runActionPhase(ctx context.Context, ws *workingSet, 
 			observe: func() (core.AccountObservation, error) {
 				return sched.core.GetObservation(ctx, capitalHandle)
 			},
+			tick: tick,
 		}
 		if req, punchNeeded := sched.decideFunc(input); punchNeeded {
 			batch = append(batch, req)
@@ -211,15 +225,17 @@ func (sched *LiveScheduler) runActionPhase(ctx context.Context, ws *workingSet, 
 // that sets present=false; agents skip that instrument this tick.
 func (sched *LiveScheduler) snapshot(ctx context.Context, ws *workingSet) *snapshotView {
 	view := &snapshotView{
-		candles: make(map[string][]store.Candle, len(ws.instruments)),
+		candles: make(map[string]map[string][]store.Candle, len(ws.instruments)),
 		quote:   make(map[string]store.Quote, len(ws.instruments)),
 		present: make(map[string]bool, len(ws.instruments)),
 	}
 	for _, instrument := range ws.instruments {
-		candles, _ := sched.marketData.ReadCandles(
-			ctx, ws.exchangeID, instrument, core.TimeframeOneMinute, sched.params.MaxLookbackK,
-		)
-		view.candles[instrument] = candles
+		tfCandles := make(map[string][]store.Candle, len(sched.params.ConfiguredTimeframes))
+		for _, tf := range sched.params.ConfiguredTimeframes {
+			candles, _ := sched.marketData.ReadCandles(ctx, ws.exchangeID, instrument, tf, sched.params.MaxLookbackK)
+			tfCandles[tf] = candles
+		}
+		view.candles[instrument] = tfCandles
 		quote, present, _ := sched.marketData.ReadQuote(ctx, ws.exchangeID, instrument)
 		view.quote[instrument] = quote
 		view.present[instrument] = present
