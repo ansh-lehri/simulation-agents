@@ -62,6 +62,8 @@ func baselineGenParams() generator.GenParams {
 		ExitStopBufferRange:                  generator.NumericRange{Low: 0.001, High: 0.01},
 		ExitTargetBufferRange:                generator.NumericRange{Low: 0.001, High: 0.01},
 		MaxHoldRange:                         generator.IntRange{Low: 10, High: 600},
+		ThetaActRange:                        generator.NumericRange{Low: 0.3, High: 0.8},
+		ConfirmsNeededRange:                  generator.IntRange{Low: 1, High: 2},
 		ChannelWeightsDirichletConcentration: 1,
 		TraitChannelSets: map[string][]string{
 			"trend":    {"chart", "volume"},

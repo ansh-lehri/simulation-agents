@@ -263,6 +263,9 @@ func completeGenParams() generator.GenParams {
 
 		MaxHoldRange: generator.IntRange{Low: 10, High: 600},
 
+		ThetaActRange:       generator.NumericRange{Low: 0.3, High: 0.8},
+		ConfirmsNeededRange: generator.IntRange{Low: 1, High: 2},
+
 		ChannelWeightsDirichletConcentration: 1,
 		TraitChannelSets: map[string][]string{
 			"trend":    {"chart", "volume"},
