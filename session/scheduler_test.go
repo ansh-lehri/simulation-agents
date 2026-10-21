@@ -12,6 +12,7 @@ import (
 
 	"simulation-agents/agent"
 	"simulation-agents/core"
+	"simulation-agents/decision"
 	"simulation-agents/store"
 )
 
@@ -141,7 +142,7 @@ func TestActionPhaseIteratesActiveSubsetOnly(t *testing.T) {
 	}
 
 	punchCh := make(chan core.OrderPunchRequest, 16)
-	sched.runActionPhase(context.Background(), ws, punchCh)
+	sched.runActionPhase(context.Background(), ws, punchCh, decision.TickContext{})
 
 	if got := int(decideCalls.Load()); got != 2 {
 		t.Fatalf("decideFunc called %d times, want 2 (only ACTIVE agents)", got)
@@ -172,7 +173,7 @@ func TestActionPhaseActCoinPActZeroNeverActs(t *testing.T) {
 	}
 
 	punchCh := make(chan core.OrderPunchRequest, 16)
-	sched.runActionPhase(context.Background(), ws, punchCh)
+	sched.runActionPhase(context.Background(), ws, punchCh, decision.TickContext{})
 
 	if got := int(decideCalls.Load()); got != 0 {
 		t.Fatalf("decideFunc called %d times with PAct=0, want 0", got)
@@ -204,7 +205,7 @@ func TestActionPhaseActCoinPActOneAlwaysActs(t *testing.T) {
 	}
 
 	punchCh := make(chan core.OrderPunchRequest, 16)
-	sched.runActionPhase(context.Background(), ws, punchCh)
+	sched.runActionPhase(context.Background(), ws, punchCh, decision.TickContext{})
 
 	if got := int(decideCalls.Load()); got != agentCount {
 		t.Fatalf("decideFunc called %d times with PAct=1, want %d", got, agentCount)
@@ -233,7 +234,7 @@ func TestActionPhaseNonBlockingOnFullChannel(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		sched.runActionPhase(context.Background(), ws, punchCh)
+		sched.runActionPhase(context.Background(), ws, punchCh, decision.TickContext{})
 		close(done)
 	}()
 
@@ -279,7 +280,7 @@ func TestActionPhaseEmitShuffleSeeded(t *testing.T) {
 		}
 
 		punchCh := make(chan core.OrderPunchRequest, 16)
-		sched.runActionPhase(context.Background(), ws, punchCh)
+		sched.runActionPhase(context.Background(), ws, punchCh, decision.TickContext{})
 		close(punchCh)
 
 		var order []string
@@ -381,6 +382,7 @@ func newTestLiveScheduler(t *testing.T, coreClient CoreClient, runtime RuntimeSt
 			LifecycleCurve:          DefaultLifecycleCurveParams(),
 			LoadSessionsConcurrency: 1,
 			MaxLookbackK:            50,
+			ConfiguredTimeframes:    []string{"1m"},
 			PunchBuffer:             16,
 			TAction:                 50 * time.Millisecond,
 			TPresence:               5 * time.Minute,
