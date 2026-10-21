@@ -25,6 +25,7 @@ func defaultSessionParams() session.Params {
 		HistoryTimeframes:       []string{core.TimeframeOneMinute},
 		ConfiguredTimeframes:    []string{core.TimeframeOneMinute},
 		MaxLookbackK:            120,
+		Perception:              session.DefaultPerceptionParams(),
 	}
 }
 
