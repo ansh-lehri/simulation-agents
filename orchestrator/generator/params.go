@@ -143,6 +143,19 @@ type GenParams struct {
 	// less than or equal to High.
 	MaxHoldRange IntRange
 
+	// ThetaActRange is the inclusive [Low, High] box for the commit-bar trait.
+	// Both bounds must be within [0, 1] and Low must be <= High. The draw uses
+	// aggressiveness as the placement driver: aggressive agents land near Low
+	// (low bar), cautious agents near High (high bar).
+	ThetaActRange NumericRange
+
+	// ConfirmsNeededRange is the inclusive integer [Low, High] box for the
+	// confirmation-count trait. Low must be >= 1 (at least one confirmation
+	// required for any waiter) and Low must be <= High. The draw uses
+	// aggressiveness as the placement driver: aggressive agents land near Low
+	// (fewer confirmations), cautious agents near High.
+	ConfirmsNeededRange IntRange
+
 	// ChannelWeightsDirichletConcentration shapes the per-trait channel-
 	// weight simplex: a high concentration pulls weights toward equal
 	// across channels, a low one toward lopsided. Must be positive.
@@ -338,6 +351,23 @@ func (params GenParams) Validate() error {
 	if params.MaxHoldRange.Low > params.MaxHoldRange.High {
 		return fmt.Errorf("generator: MaxHoldRange low %d must be <= high %d",
 			params.MaxHoldRange.Low, params.MaxHoldRange.High)
+	}
+
+	if !isProbability(params.ThetaActRange.Low) || !isProbability(params.ThetaActRange.High) {
+		return fmt.Errorf("generator: ThetaActRange [%v, %v] must have both bounds within [0,1]",
+			params.ThetaActRange.Low, params.ThetaActRange.High)
+	}
+	if params.ThetaActRange.Low > params.ThetaActRange.High {
+		return fmt.Errorf("generator: ThetaActRange low %v must be <= high %v",
+			params.ThetaActRange.Low, params.ThetaActRange.High)
+	}
+
+	if params.ConfirmsNeededRange.Low < 1 {
+		return fmt.Errorf("generator: ConfirmsNeededRange.Low %d must be >= 1", params.ConfirmsNeededRange.Low)
+	}
+	if params.ConfirmsNeededRange.Low > params.ConfirmsNeededRange.High {
+		return fmt.Errorf("generator: ConfirmsNeededRange low %d must be <= high %d",
+			params.ConfirmsNeededRange.Low, params.ConfirmsNeededRange.High)
 	}
 
 	if params.ChannelWeightsDirichletConcentration <= 0 {
