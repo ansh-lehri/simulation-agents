@@ -30,12 +30,10 @@ type TraitVector struct {
 	Phi         *float64           `json:"phi,omitempty"` // optimism latent in [-1,+1]: drives directional bias
 	Perception  *PerceptionProfile `json:"perception_profile,omitempty"`
 	Exit        *ExitProfile       `json:"exit_profile,omitempty"`
-	MaxHold     *int               `json:"max_hold,omitempty"` // position hold cap, in ticks
-
-	// ThetaAdd is a reserved endogenous add-gate dial. It is not populated
-	// in this phase: it is paired with a sibling act-gate dial that has
-	// not been specified yet, so the field is kept out of the struct until
-	// both are defined together.
+	MaxHold        *int     `json:"max_hold,omitempty"`         // position hold cap, in ticks
+	ThetaAct       *float64 `json:"theta_act,omitempty"`        // commit bar in [0,1]: aggressive→low, cautious→high
+	NeedsConfirm   *bool    `json:"needs_confirm,omitempty"`    // false=immediate actor, true=waits for confirmations
+	ConfirmsNeeded *int     `json:"confirms_needed,omitempty"`  // confirmation count required when needs_confirm=true; drawn unconditionally
 
 	// Herd-only.
 	ActProb *float64 `json:"act_prob,omitempty"` // tip credulity in [0,1]; not derived from other axes
