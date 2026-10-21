@@ -342,8 +342,8 @@ func TestSetTipFollowState_NilTrackingClearsTracking(t *testing.T) {
 	}
 }
 
-// SetPerceptionRefs writes all five gate-ref fields with the correct
-// field names and correctly encoded values.
+// SetPerceptionRefs stores the gate-ref snapshot as a JSON blob under a
+// per-instrument field, and the decoded struct matches what was written.
 func TestSetPerceptionRefs_RoundTrip(t *testing.T) {
 	client := openTestRedis(t)
 	ctx := context.Background()
@@ -356,28 +356,58 @@ func TestSetPerceptionRefs_RoundTrip(t *testing.T) {
 		LastRangePos: 0.6125,
 		LastPhase:    "open",
 	}
-	if err := runtimeStore.SetPerceptionRefs(ctx, "ex-1", "a-1", refs); err != nil {
+	if err := runtimeStore.SetPerceptionRefs(ctx, "ex-1", "a-1", "AAPL", refs); err != nil {
 		t.Fatalf("SetPerceptionRefs: %v", err)
 	}
 
-	key := store.RuntimeKey("ex-1", "a-1")
-	cases := []struct {
-		field string
-		want  string
-	}{
-		{store.FieldGateRefPrice, "10250"},
-		{store.FieldGateRefSpread, "5"},
-		{store.FieldGateRefVolume, "3400"},
-		{store.FieldGateRefRangePos, strconv.FormatFloat(0.6125, 'f', -1, 64)},
-		{store.FieldGateRefPhase, "open"},
+	raw, err := client.HGet(ctx, store.RuntimeKey("ex-1", "a-1"), store.GateRefsField("AAPL")).Result()
+	if err != nil {
+		t.Fatalf("HGet gate_refs:AAPL: %v", err)
 	}
-	for _, tc := range cases {
-		got, err := client.HGet(ctx, key, tc.field).Result()
+	var decoded store.PerceptionRefs
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		t.Fatalf("unmarshal perception refs: %v", err)
+	}
+	if decoded != refs {
+		t.Errorf("perception refs round-trip: got %+v want %+v", decoded, refs)
+	}
+}
+
+// Two instruments on the same agent must use independent hash fields —
+// writing AAPL refs must not overwrite GOOG refs stored for the same agent.
+func TestSetPerceptionRefs_TwoInstrumentsIsolated(t *testing.T) {
+	client := openTestRedis(t)
+	ctx := context.Background()
+	runtimeStore := store.NewRedisRuntimeStore(client)
+
+	aaplRefs := store.PerceptionRefs{LastPrice: 10250, LastPhase: "open"}
+	googRefs := store.PerceptionRefs{LastPrice: 9500, LastPhase: "continuous"}
+
+	if err := runtimeStore.SetPerceptionRefs(ctx, "ex-1", "a-1", "AAPL", aaplRefs); err != nil {
+		t.Fatalf("SetPerceptionRefs AAPL: %v", err)
+	}
+	if err := runtimeStore.SetPerceptionRefs(ctx, "ex-1", "a-1", "GOOG", googRefs); err != nil {
+		t.Fatalf("SetPerceptionRefs GOOG: %v", err)
+	}
+
+	key := store.RuntimeKey("ex-1", "a-1")
+	for _, tc := range []struct {
+		instrument string
+		want       store.PerceptionRefs
+	}{
+		{"AAPL", aaplRefs},
+		{"GOOG", googRefs},
+	} {
+		raw, err := client.HGet(ctx, key, store.GateRefsField(tc.instrument)).Result()
 		if err != nil {
-			t.Fatalf("HGet %s: %v", tc.field, err)
+			t.Fatalf("HGet gate_refs:%s: %v", tc.instrument, err)
 		}
-		if got != tc.want {
-			t.Errorf("%s: got %q want %q", tc.field, got, tc.want)
+		var decoded store.PerceptionRefs
+		if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+			t.Fatalf("unmarshal %s refs: %v", tc.instrument, err)
+		}
+		if decoded != tc.want {
+			t.Errorf("gate_refs:%s: got %+v want %+v", tc.instrument, decoded, tc.want)
 		}
 	}
 }
