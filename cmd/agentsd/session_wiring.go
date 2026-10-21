@@ -23,6 +23,8 @@ func defaultSessionParams() session.Params {
 		OnDemandSessionDuration: 30 * time.Minute,
 		AckReadTimeout:          5 * time.Second,
 		HistoryTimeframes:       []string{core.TimeframeOneMinute},
+		ConfiguredTimeframes:    []string{core.TimeframeOneMinute},
+		MaxLookbackK:            120,
 	}
 }
 
