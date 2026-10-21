@@ -386,6 +386,7 @@ func newTestLiveScheduler(t *testing.T, coreClient CoreClient, runtime RuntimeSt
 			PunchBuffer:             16,
 			TAction:                 50 * time.Millisecond,
 			TPresence:               5 * time.Minute,
+			Perception:              DefaultPerceptionParams(),
 		},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		stubRNGSource{},
