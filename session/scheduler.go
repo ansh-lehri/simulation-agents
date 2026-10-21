@@ -199,7 +199,9 @@ func (sched *LiveScheduler) runActionPhase(ctx context.Context, ws *workingSet, 
 			observe: func() (core.AccountObservation, error) {
 				return sched.core.GetObservation(ctx, capitalHandle)
 			},
-			tick: tick,
+			tick:             tick,
+			perceptionParams: sched.params.Perception,
+			timeframes:       sched.params.ConfiguredTimeframes,
 		}
 		if req, punchNeeded := sched.decideFunc(input); punchNeeded {
 			batch = append(batch, req)
