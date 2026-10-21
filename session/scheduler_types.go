@@ -145,24 +145,55 @@ type lifecycleCurves struct {
 	giveUpProb func(idleDuration float64) float64
 }
 
-// decideInput is the four-part seam handed to decide() for each
-// active agent whose act-coin fires. The action phase assembles it;
-// the decide() body fills the perception and decision logic.
-// Parts: the agent's traits and working-memory handle; the shared
-// raw market snapshot; a bound fresh-read accessor for the agent's
-// live own-state from Core; and the tick timing for building the
-// market-data accessor.
+// decideInput is the seam handed to decide() for each active agent whose
+// act-coin fires. The action phase assembles it; the decide() body fills
+// the perception and decision logic.
+// Parts: the agent's traits and working-memory handle; the shared raw
+// market snapshot; a bound fresh-read accessor for the agent's live
+// own-state from Core; the tick timing for building the market-data
+// accessor; the two global perception calibration dials; and the ordered
+// timeframe list the snapshot was built from.
 type decideInput struct {
-	agentState *workingAgent
-	market     *snapshotView
-	observe    func() (core.AccountObservation, error)
-	tick       decision.TickContext
+	agentState       *workingAgent
+	market           *snapshotView
+	observe          func() (core.AccountObservation, error)
+	tick             decision.TickContext
+	perceptionParams decision.PerceptionParams
+	timeframes       []string
 }
 
-// decide is the Tier-4 seam stub. The action phase calls it once per
-// active agent whose act-coin fires. The real body lands in Tier 4;
-// this stub always returns no punch so the loop runs correctly without
-// a Tier-4 implementation.
-func decide(_ decideInput) (core.OrderPunchRequest, bool) {
+// decide is the per-agent decision function. For Stage 4a (perception) it
+// runs the gate-and-perceive loop for each instrument in the snapshot:
+// compare current market state against stored refs, re-run perception only
+// when the gate signals a meaningful change, and persist the updated refs
+// to Redis as a best-effort write. The order decision (4b) is not yet
+// implemented — this function always returns no punch.
+func decide(input decideInput) (core.OrderPunchRequest, bool) {
+	if len(input.timeframes) == 0 || len(input.market.candles) == 0 {
+		return core.OrderPunchRequest{}, false
+	}
+	tf := input.timeframes[0]
+	acc := decision.NewAccessor(
+		input.market.candles,
+		input.market.quote,
+		input.market.present,
+		input.tick,
+	)
+	for inst := range input.market.candles {
+		mem := input.agentState.perception[inst]
+		if mem == nil {
+			mem = &instrumentMemory{}
+			input.agentState.perception[inst] = mem
+		}
+		if decision.ShouldReperceive(input.agentState.traits, acc, inst, tf, mem.refs) {
+			bundle, refs := decision.Perceive(
+				input.agentState.traits, acc, inst, tf,
+				input.agentState.agentRNG, input.perceptionParams,
+			)
+			mem.lastBundle = &bundle
+			mem.refs = refs
+			_ = input.agentState.memoryHandle.SetPerceptionRefs(inst, refs)
+		}
+	}
 	return core.OrderPunchRequest{}, false
 }
