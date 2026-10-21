@@ -81,6 +81,11 @@ func drawTraitVector(rng *rand.Rand, params GenParams, scenarioShifts *Effective
 	maxHold := drawMaxHold(rng, params.MaxHoldRange, reactivity, params.SigmaIdio)
 	traits.MaxHold = &maxHold
 
+	thetaAct, needsConfirm, confirmsNeeded := drawCommitGateTraits(rng, traits.Aggressiveness, params)
+	traits.ThetaAct = &thetaAct
+	traits.NeedsConfirm = &needsConfirm
+	traits.ConfirmsNeeded = &confirmsNeeded
+
 	return traits
 }
 
