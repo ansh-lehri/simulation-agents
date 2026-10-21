@@ -32,6 +32,7 @@ func TestTraitVector_HerdWireIsLean(t *testing.T) {
 	mustOmit := []string{
 		"disposition", "diet", "rho", "phi",
 		"perception_profile", "exit_profile", "max_hold",
+		"theta_act", "needs_confirm", "confirms_needed",
 		"is_tipper",
 	}
 	for _, key := range mustOmit {
@@ -54,11 +55,15 @@ func TestTraitVector_HerdWireIsLean(t *testing.T) {
 }
 
 // A fully populated endogenous (tipper) row must round-trip exactly, and
-// must not carry the herd-only act_prob field.
+// must not carry the herd-only act_prob field. Includes all three commit-gate
+// trait fields so the JSONB path for those fields is exercised end-to-end.
 func TestTraitVector_EndogenousTipperRoundTrip(t *testing.T) {
 	rho := 0.55
 	phi := -0.2
 	maxHold := 1500
+	thetaAct := 0.45
+	needsConfirm := true
+	confirmsNeeded := 2
 
 	original := agent.TraitVector{
 		AgentKind:      agent.AgentKindEndogenous,
@@ -100,8 +105,11 @@ func TestTraitVector_EndogenousTipperRoundTrip(t *testing.T) {
 			StopBuffer:   0.005,
 			TargetBuffer: 0.005,
 		},
-		MaxHold:  &maxHold,
-		IsTipper: true,
+		MaxHold:        &maxHold,
+		ThetaAct:       &thetaAct,
+		NeedsConfirm:   &needsConfirm,
+		ConfirmsNeeded: &confirmsNeeded,
+		IsTipper:       true,
 	}
 
 	raw, err := json.Marshal(original)
@@ -114,7 +122,9 @@ func TestTraitVector_EndogenousTipperRoundTrip(t *testing.T) {
 	}
 	for _, key := range []string{
 		"disposition", "diet", "rho", "phi",
-		"perception_profile", "exit_profile", "max_hold", "is_tipper",
+		"perception_profile", "exit_profile", "max_hold",
+		"theta_act", "needs_confirm", "confirms_needed",
+		"is_tipper",
 	} {
 		if !bytes.Contains(raw, []byte(`"`+key+`"`)) {
 			t.Errorf("endogenous row missing %q: %s", key, raw)
@@ -147,6 +157,96 @@ func TestTraitVector_EndogenousNonTipper_OmitsIsTipper(t *testing.T) {
 	}
 	if bytes.Contains(raw, []byte(`"is_tipper"`)) {
 		t.Errorf("non-tipper carries is_tipper: %s", raw)
+	}
+}
+
+// Commit-gate fields on an endogenous row must survive a JSONB round-trip
+// with their exact types preserved: theta_act as float64, needs_confirm as
+// bool, confirms_needed as int. This exercises the pointer-unwrap path and
+// catches any accidental type coercion during JSON decode.
+func TestTraitVector_CommitGateFieldsRoundTrip(t *testing.T) {
+	thetaAct := 0.62
+	needsConfirmFalse := false
+	confirmsNeeded := 1
+
+	endogenous := agent.TraitVector{
+		AgentKind:      agent.AgentKindEndogenous,
+		Skill:          0.5,
+		Aggressiveness: 0.7,
+		CapitalSize:    200_000,
+		PnlReactivity:  0.4,
+		PAct:           0.2,
+		ThetaAct:       &thetaAct,
+		NeedsConfirm:   &needsConfirmFalse,
+		ConfirmsNeeded: &confirmsNeeded,
+	}
+
+	raw, err := json.Marshal(endogenous)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	for _, key := range []string{"theta_act", "needs_confirm", "confirms_needed"} {
+		if !bytes.Contains(raw, []byte(`"`+key+`"`)) {
+			t.Errorf("commit-gate field %q absent from wire: %s", key, raw)
+		}
+	}
+
+	var decoded agent.TraitVector
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !reflect.DeepEqual(endogenous, decoded) {
+		t.Errorf("commit-gate fields round-trip mismatch:\n got  %+v\n want %+v", decoded, endogenous)
+	}
+	if decoded.ThetaAct == nil || *decoded.ThetaAct != thetaAct {
+		t.Errorf("ThetaAct wrong after round-trip: got %v, want %v", decoded.ThetaAct, thetaAct)
+	}
+	if decoded.NeedsConfirm == nil || *decoded.NeedsConfirm != needsConfirmFalse {
+		t.Errorf("NeedsConfirm wrong after round-trip: got %v, want %v", decoded.NeedsConfirm, needsConfirmFalse)
+	}
+	if decoded.ConfirmsNeeded == nil || *decoded.ConfirmsNeeded != confirmsNeeded {
+		t.Errorf("ConfirmsNeeded wrong after round-trip: got %v, want %v", decoded.ConfirmsNeeded, confirmsNeeded)
+	}
+}
+
+// Herd rows must carry nil for all three commit-gate fields — they follow
+// tips and never go through the commit-gate decision path.
+func TestTraitVector_CommitGateFieldsAbsentOnHerd(t *testing.T) {
+	actProb := 0.5
+	herd := agent.TraitVector{
+		AgentKind:      agent.AgentKindHerd,
+		Skill:          0.3,
+		Aggressiveness: 0.6,
+		CapitalSize:    50_000,
+		PnlReactivity:  0.3,
+		PAct:           0.1,
+		ActProb:        &actProb,
+	}
+
+	raw, err := json.Marshal(herd)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	for _, key := range []string{"theta_act", "needs_confirm", "confirms_needed"} {
+		if bytes.Contains(raw, []byte(`"`+key+`"`)) {
+			t.Errorf("herd row carries commit-gate field %q; must be absent: %s", key, raw)
+		}
+	}
+
+	var decoded agent.TraitVector
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.ThetaAct != nil {
+		t.Errorf("herd ThetaAct must be nil, got %v", *decoded.ThetaAct)
+	}
+	if decoded.NeedsConfirm != nil {
+		t.Errorf("herd NeedsConfirm must be nil, got %v", *decoded.NeedsConfirm)
+	}
+	if decoded.ConfirmsNeeded != nil {
+		t.Errorf("herd ConfirmsNeeded must be nil, got %v", *decoded.ConfirmsNeeded)
 	}
 }
 
