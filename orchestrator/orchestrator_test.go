@@ -81,7 +81,7 @@ func (nopRuntimeStore) SetPositionContext(_ context.Context, _ string, _ agent.A
 func (nopRuntimeStore) SetTipFollowState(_ context.Context, _ string, _ agent.AgentID, _ *store.Tracking, _ string, _, _ int64) error {
 	return nil
 }
-func (nopRuntimeStore) SetPerceptionRefs(_ context.Context, _ string, _ agent.AgentID, _ store.PerceptionRefs) error {
+func (nopRuntimeStore) SetPerceptionRefs(_ context.Context, _ string, _ agent.AgentID, _ string, _ store.PerceptionRefs) error {
 	return nil
 }
 

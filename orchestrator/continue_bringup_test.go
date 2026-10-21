@@ -522,7 +522,7 @@ func (fake *recordingRuntimeStore) SetPositionContext(_ context.Context, _ strin
 func (fake *recordingRuntimeStore) SetTipFollowState(_ context.Context, _ string, _ agent.AgentID, _ *store.Tracking, _ string, _, _ int64) error {
 	return nil
 }
-func (fake *recordingRuntimeStore) SetPerceptionRefs(_ context.Context, _ string, _ agent.AgentID, _ store.PerceptionRefs) error {
+func (fake *recordingRuntimeStore) SetPerceptionRefs(_ context.Context, _ string, _ agent.AgentID, _ string, _ store.PerceptionRefs) error {
 	return nil
 }
 
