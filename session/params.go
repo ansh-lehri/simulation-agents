@@ -72,6 +72,14 @@ type Params struct {
 	// history when only the recent trailing window is needed.
 	MaxLookbackK int
 
+	// ConfiguredTimeframes is the non-empty set of candle timeframes
+	// the action-tick snapshot reads for each instrument. Each entry
+	// must match one of the timeframes populated by the history pull;
+	// the snapshot issues one ReadCandles call per (instrument × timeframe)
+	// pair and builds a nested map for signal functions that need candles
+	// at a specific granularity.
+	ConfiguredTimeframes []string
+
 	// PunchBuffer is the buffer depth of the dispatcher channel.
 	// Sized to absorb one action tick's worth of punches without
 	// blocking the action loop while the dispatcher is mid-send.
