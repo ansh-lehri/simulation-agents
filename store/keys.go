@@ -58,15 +58,15 @@ const (
 	FieldMyExitLevel    = "my_exit_level"
 	FieldSubmitAt       = "submit_at"
 
-	// Perception-gate reference fields — the last market readings the
-	// agent acted on, carried between ticks so the gate can tell
-	// whether conditions have shifted enough to warrant re-evaluation.
-	FieldGateRefPrice    = "gate_ref_price"
-	FieldGateRefSpread   = "gate_ref_spread"
-	FieldGateRefVolume   = "gate_ref_volume"
-	FieldGateRefRangePos = "gate_ref_range_pos"
-	FieldGateRefPhase    = "gate_ref_phase"
 )
+
+// GateRefsField returns the per-instrument hash field name for the
+// perception gate reference snapshot. Each instrument's refs are stored
+// as a single JSON blob under this field in the agent's runtime hash,
+// keyed by instrument so per-instrument perception memory never collides.
+func GateRefsField(instrument string) string {
+	return "gate_refs:" + instrument
+}
 
 // LoadStatusFailed is the stored value for FieldLoadStatus when
 // a per-agent install failed and the agent should be skipped at
