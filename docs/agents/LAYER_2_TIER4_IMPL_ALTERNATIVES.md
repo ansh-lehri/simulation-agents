@@ -41,4 +41,8 @@ What this doc is. The roads-not-taken for the Tier-4 implementation design — e
 #	Decision	Chosen	Alternative(s) not chosen	Why deferred / revisit
 1	Add-check and the noise coin	Add-check calls interpret+mix directly — the mixer's signal-only path — never noiseImpulse	let a noise-coin hit also qualify as an add trigger	An add is a signal-driven scaling decision on an already-live position; the noise coin is an entry-liveness impulse for a flat agent (framing §7), not a reason to pyramid a position that's already open. Revisit only if a future design wants a noise-driven add, which would need its own gate (noise has no conviction/direction tied to the held position's own channel).
 
-End — Tier-4 implementation alternatives (4a, 4b, 4c, 4d). Extend per sub-step.
+Tree Assembly
+#	Decision	Chosen	Alternative(s) not chosen	Why deferred / revisit
+1	One-punch resolution order	Class first (close beats open/add unconditionally), then ExecIntent.Conviction, then an agentRNG coin on an exact tie	conviction-first across classes (highest Conviction wins outright, regardless of close/open/add)	Risk-off first: a stopped/reversed position exiting must never lose a capital slot to a fresh, higher-conviction bet. Locked with the user; not revisited by the degenerate single-instrument demo having ≤1 candidate today.
+
+End — Tier-4 implementation alternatives (4a, 4b, 4c, 4d, Tree Assembly). Extend per sub-step.

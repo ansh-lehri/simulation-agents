@@ -8,16 +8,36 @@ import (
 )
 
 // mixOpinion is the mixer's output: one signed trading view and its
-// conviction. commit.go is only ever allowed to read these two fields
-// — this type carries nothing else, which is what structurally
-// enforces "commit never re-reads mixer internals": there is simply no
-// internal state left on the type for it to read. Conviction already
-// bakes in however much the traits agreed or disagreed with each
-// other, so nothing downstream needs to re-derive that agreement.
+// conviction, plus which trait led it. commit.go is only ever allowed
+// to read Direction and Conviction — DominantTrait exists for the
+// tree-assembly stage's caller (which calls mix directly, the same way
+// commit.go does, not through commit.go) to stamp a position's entry
+// channel; commit.go itself must never read it, which is what keeps
+// "commit never re-reads mixer internals" true in practice and not
+// just by the type's field list. Conviction already bakes in however
+// much the traits agreed or disagreed with each other, so nothing
+// downstream needs to re-derive that agreement.
 type mixOpinion struct {
 	Direction  float64 // +1 long, -1 short
 	Conviction float64 // [0,1]
+
+	// DominantTrait is "trend", "mean_rev" — whichever trait's verdict
+	// this opinion is built from — or "noise" on the noiseImpulse path,
+	// which forms no trait verdict at all. An already-computed fact
+	// (the dominance decision this file makes regardless), surfaced
+	// here rather than recomputed elsewhere.
+	DominantTrait string
 }
+
+// traitTrend and traitMeanRev name the two traits this package's mixer
+// combines — the values noiseImpulse and mix report as mixOpinion's
+// DominantTrait. traitNoise marks the noiseImpulse bypass, which forms
+// no trait verdict at all.
+const (
+	traitTrend   = "trend"
+	traitMeanRev = "mean_rev"
+	traitNoise   = "noise"
+)
 
 // noiseImpulse rolls one agent's own per-tick noise coin. It is a
 // standalone step, independent of gateDecide and mix, meant to be
@@ -48,7 +68,7 @@ func noiseImpulse(disposition agent.Disposition, agentRNG *rand.Rand, params Mix
 	if agentRNG.Float64() < 0.5 {
 		direction = -1.0
 	}
-	return &mixOpinion{Direction: direction, Conviction: params.NoiseImpulseConviction}, true
+	return &mixOpinion{Direction: direction, Conviction: params.NoiseImpulseConviction, DominantTrait: traitNoise}, true
 }
 
 // mix combines one agent's own per-trait verdicts into at most one
@@ -81,12 +101,14 @@ func mix(verdicts traitVerdicts, disposition agent.Disposition, agentRNG *rand.R
 		return nil
 	case 1:
 		var onlyVerdict float64
+		dominantTrait := traitMeanRev
 		if verdicts.trend != nil {
 			onlyVerdict = *verdicts.trend
+			dominantTrait = traitTrend
 		} else {
 			onlyVerdict = *verdicts.meanRev
 		}
-		return &mixOpinion{Direction: directionOf(onlyVerdict), Conviction: math.Abs(onlyVerdict)}
+		return &mixOpinion{Direction: directionOf(onlyVerdict), Conviction: math.Abs(onlyVerdict), DominantTrait: dominantTrait}
 	}
 
 	// Both traits have a verdict: the one with the larger disposition
@@ -104,9 +126,11 @@ func mix(verdicts traitVerdicts, disposition agent.Disposition, agentRNG *rand.R
 
 	dominantVerdict, secondaryVerdict := *verdicts.trend, *verdicts.meanRev
 	secondaryWeight := disposition.MeanRev
+	dominantTrait := traitTrend
 	if !trendIsDominant {
 		dominantVerdict, secondaryVerdict = *verdicts.meanRev, *verdicts.trend
 		secondaryWeight = disposition.Trend
+		dominantTrait = traitMeanRev
 	}
 
 	direction := directionOf(dominantVerdict)
@@ -122,7 +146,7 @@ func mix(verdicts traitVerdicts, disposition agent.Disposition, agentRNG *rand.R
 	}
 	conviction = clamp01(conviction * (1 + align*secondaryWeight*math.Abs(secondaryVerdict)*params.SecondarySensitivity))
 
-	return &mixOpinion{Direction: direction, Conviction: conviction}
+	return &mixOpinion{Direction: direction, Conviction: conviction, DominantTrait: dominantTrait}
 }
 
 // Superseded: mix() originally owned the noise coin directly and

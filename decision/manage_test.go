@@ -2,6 +2,7 @@ package decision
 
 import (
 	"math/rand/v2"
+	"reflect"
 	"testing"
 
 	"pgregory.net/rapid"
@@ -34,9 +35,9 @@ func testExitProfile(mode string, stopPct, targetPct, stopBuffer, targetBuffer f
 // before routing here, so this is only ever hit if that invariant is
 // ever violated. Manage must not panic, and must report hold.
 func TestManage_ZeroQtyGuard(t *testing.T) {
-	intent, ok := Manage(ManageInput{Position: core.Position{Qty: 0}})
-	if ok {
-		t.Fatalf("zero-qty position: want hold (false), got intent %+v", intent)
+	outcome := Manage(ManageInput{Position: core.Position{Qty: 0}})
+	if outcome.Candidate != nil {
+		t.Fatalf("zero-qty position: want hold (nil candidate), got %+v", outcome)
 	}
 }
 
@@ -470,25 +471,28 @@ func TestCheckAdd(t *testing.T) {
 	}
 
 	t.Run("all conditions true -> add with the opinion's conviction", func(t *testing.T) {
-		intent, add := checkAdd(baseInput, 1, 10)
+		intent, channel, add := checkAdd(baseInput, 1, 10)
 		if !add || intent.Action != ExecIntentActionAdd || intent.Direction != 1 {
 			t.Fatalf("want add/long, got (add=%v, intent=%+v)", add, intent)
 		}
 		if intent.Conviction != 0.9 {
 			t.Errorf("Conviction = %v, want 0.9", intent.Conviction)
 		}
+		if channel != "chart" {
+			t.Errorf("channel = %q, want %q (trend's dominant lean channel)", channel, "chart")
+		}
 	})
 
 	t.Run("opposite mix direction -> hold", func(t *testing.T) {
 		input := baseInput
 		input.Bundle = downBundle
-		if _, add := checkAdd(input, 1, 10); add {
+		if _, _, add := checkAdd(input, 1, 10); add {
 			t.Error("want hold when the mixer's opinion opposes the position's own direction")
 		}
 	})
 
 	t.Run("losing position -> hold", func(t *testing.T) {
-		if _, add := checkAdd(baseInput, 1, -10); add {
+		if _, _, add := checkAdd(baseInput, 1, -10); add {
 			t.Error("want hold when the position is not in profit")
 		}
 	})
@@ -496,7 +500,7 @@ func TestCheckAdd(t *testing.T) {
 	t.Run("conviction below theta_add -> hold", func(t *testing.T) {
 		input := baseInput
 		input.Bundle = weakUpBundle // conviction 0.3 < theta_add 0.6
-		if _, add := checkAdd(input, 1, 10); add {
+		if _, _, add := checkAdd(input, 1, 10); add {
 			t.Error("want hold when conviction does not clear theta_add")
 		}
 	})
@@ -504,7 +508,7 @@ func TestCheckAdd(t *testing.T) {
 	t.Run("no verdicts at all -> hold", func(t *testing.T) {
 		input := baseInput
 		input.Bundle = &PerceptionBundle{}
-		if _, add := checkAdd(input, 1, 10); add {
+		if _, _, add := checkAdd(input, 1, 10); add {
 			t.Error("want hold when the mixer has no opinion to act on")
 		}
 	})
@@ -529,7 +533,7 @@ func TestCheckAdd_NeverRollsNoiseCoin(t *testing.T) {
 			RNG:    newManageRNG(1),
 			Params: Params{ThetaAddMargin: 0.1},
 		}
-		intent, add := checkAdd(input, 1, 10)
+		intent, _, add := checkAdd(input, 1, 10)
 		results = append(results, intent)
 		adds = append(adds, add)
 	}
@@ -577,9 +581,12 @@ func TestManage_AddsWhenNoExitAndAddConditionsHold(t *testing.T) {
 		Params:       Params{ThetaAddMargin: 0.1},
 	}
 
-	intent, ok := Manage(input)
-	if !ok || intent.Action != ExecIntentActionAdd || intent.Direction != 1 {
-		t.Fatalf("want add/long, got (ok=%v, intent=%+v)", ok, intent)
+	outcome := Manage(input)
+	if outcome.Candidate == nil || outcome.Candidate.Action != ExecIntentActionAdd || outcome.Candidate.Direction != 1 {
+		t.Fatalf("want add/long, got %+v", outcome)
+	}
+	if outcome.Commitment == nil || outcome.Commitment.PositionContext.EntryChannel != "chart" {
+		t.Fatalf("want a commitment re-stamping entry_channel=chart, got %+v", outcome.Commitment)
 	}
 }
 
@@ -605,9 +612,9 @@ func TestManage_Determinism(t *testing.T) {
 		}
 	}
 
-	first, firstOK := Manage(buildInput())
-	second, secondOK := Manage(buildInput())
-	if first != second || firstOK != secondOK {
-		t.Fatalf("Manage not deterministic: first=(%+v, %v), second=(%+v, %v)", first, firstOK, second, secondOK)
+	first := Manage(buildInput())
+	second := Manage(buildInput())
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("Manage not deterministic: first=%+v, second=%+v", first, second)
 	}
 }

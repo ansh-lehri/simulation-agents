@@ -100,10 +100,8 @@ func TestDefaultGenParams_TraitChannelSetsHasNoNoiseEntry(t *testing.T) {
 	}
 }
 
-// defaultDecisionParams has no caller yet (the flat-agent entry
-// decision that consumes it lands in a later stage), so this test is
-// what keeps it exercised rather than flagged as dead composition-root
-// code. It also pins the basic sanity every shave/mixer constant must
+// defaultSessionParams wires this into session.Params.Decision now, but
+// this test still pins the basic sanity every shave/mixer constant must
 // satisfy regardless of the exact placeholder magnitude: floors sit in
 // (0,1] (a shave can shrink conviction hard but never force it to
 // exactly zero on its own), and the two threshold-shaped dials are

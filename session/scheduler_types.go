@@ -144,6 +144,16 @@ type snapshotView struct {
 	candles map[string]map[string][]store.Candle // instrument → timeframe → bars
 	quote   map[string]store.Quote
 	present map[string]bool // false when the quote key is absent in Redis
+
+	// instruments is the session's instrument list in the same stable
+	// order as workingSet.instruments, copied onto this per-tick view
+	// so decide()'s per-instrument traversal has a deterministic
+	// sequence to range over. Perceive consumes agentRNG on every
+	// instrument it visits, so ranging over a map instead (candles,
+	// quote, or present — all map-keyed) would let Go's randomized map
+	// iteration order change the agent's RNG draw sequence from run to
+	// run under an identical seed, breaking reproducibility.
+	instruments []string
 }
 
 // lifecycleCurves holds the four realized lifecycle functions for one
@@ -186,19 +196,32 @@ type decideInput struct {
 	observe          func() (core.AccountObservation, error)
 	tick             decision.TickContext
 	perceptionParams decision.PerceptionParams
+	decisionParams   decision.Params
 	timeframes       []string
 }
 
-// decide is the per-agent decision function. For Stage 4a (perception) it
-// runs the gate-and-perceive loop for each instrument in the snapshot:
-// compare current market state against stored refs, re-run perception only
-// when the gate signals a meaningful change, and persist the updated refs
-// to Redis as a best-effort write. The order decision (4b) is not yet
-// implemented — this function always returns no punch.
+// decide is the per-agent Tier-4 seam: the I/O orchestrator that binds
+// 4a (perceive) → the root flat/holding fork (4b decision.Decide / 4d
+// decision.Manage) → 4c (decision.Execute) into the one gated tree the
+// Tier-3 seam allows to emit at most one order per agent per tick. All
+// I/O — the one observe() read, the Redis mirrors — happens here; every
+// computation it calls into is a pure decision-package function.
+//
+// Three leaves return no punch: an observe() error (the hot-path rule —
+// any error skips this tick's action entirely, no partial traversal);
+// zero candidates after a full traversal (every instrument coasted,
+// skipped, held, or waited); and a resolved winner that 4c declines
+// (iteration 1 emits nothing and relies on next-tick retry — no
+// fallback to the next-best candidate).
 func decide(input decideInput) (core.OrderPunchRequest, bool) {
-	if len(input.timeframes) == 0 || len(input.market.candles) == 0 {
+	if len(input.timeframes) == 0 {
 		return core.OrderPunchRequest{}, false
 	}
+	obs, err := input.observe()
+	if err != nil {
+		return core.OrderPunchRequest{}, false
+	}
+
 	tf := input.timeframes[0]
 	acc := decision.NewAccessor(
 		input.market.candles,
@@ -206,12 +229,22 @@ func decide(input decideInput) (core.OrderPunchRequest, bool) {
 		input.market.present,
 		input.tick,
 	)
-	for inst := range input.market.candles {
+
+	candidates := make([]decision.InstrumentCandidate, 0, len(input.market.instruments))
+	for _, inst := range input.market.instruments {
+		if !acc.Present(inst) {
+			continue
+		}
+
 		mem := input.agentState.perception[inst]
 		if mem == nil {
-			mem = &instrumentMemory{}
+			mem = &instrumentMemory{lastCommitTick: decision.NoPriorCommit}
 			input.agentState.perception[inst] = mem
 		}
+		// 4a runs first and unconditionally for every present
+		// instrument, flat or holding: a held instrument's reversal
+		// and level-mode exit checks need THIS tick's bundle, not a
+		// stale one from whenever it last ran perception.
 		if decision.ShouldReperceive(input.agentState.traits, acc, inst, tf, mem.refs) {
 			bundle, refs := decision.Perceive(
 				input.agentState.traits, acc, inst, tf,
@@ -221,6 +254,167 @@ func decide(input decideInput) (core.OrderPunchRequest, bool) {
 			mem.refs = refs
 			_ = input.agentState.memoryHandle.SetPerceptionRefs(inst, refs)
 		}
+		bundle := decision.PerceptionBundle{}
+		if mem.lastBundle != nil {
+			bundle = *mem.lastBundle
+		}
+
+		// The one fork: holding -> Manage (4d), flat -> Decide (4b),
+		// mutually exclusive, decided off the single shared observe()
+		// read from stage 0.
+		position, holding := decision.PositionFor(obs, inst)
+
+		var outcome decision.NodeOutcome
+		if holding {
+			currentPrice, priceOK := acc.CurrentPrice(inst, tf)
+			if !priceOK {
+				// No derivable price this tick even though a quote key
+				// is present (e.g. no trade has ever printed and no
+				// candle exists yet) — 4d has nothing to mark or
+				// evaluate triggers against, so this instrument sits
+				// out this tick. Perception above already ran.
+				continue
+			}
+			outcome = decision.Manage(decision.ManageInput{
+				Position:        position,
+				Bundle:          &bundle,
+				PositionContext: mem.positionContext,
+				Traits:          input.agentState.traits,
+				CurrentPrice:    currentPrice,
+				Tick:            input.tick,
+				Roles:           decision.TraitChannelRoles,
+				RNG:             input.agentState.agentRNG,
+				Params:          input.decisionParams,
+			})
+		} else {
+			outcome = decision.Decide(decision.DecideInput{
+				Bundle:              bundle,
+				Traits:              input.agentState.traits,
+				Roles:               decision.TraitChannelRoles,
+				CurrentTick:         input.tick.TickIndex,
+				SessionProgress:     acc.SessionProgress(),
+				StandingOpinion:     mem.standingOpinion,
+				StandingStance:      mem.standingStance,
+				LastDecidedReadings: mem.lastDecidedReadings,
+				PendingWatch:        mem.pendingWatch,
+				WaitStreak:          mem.waitStreak,
+				LastCommitTick:      mem.lastCommitTick,
+				RNG:                 input.agentState.agentRNG,
+				Params:              input.decisionParams,
+			})
+		}
+
+		// Assessment applies now, for every traversed instrument, win
+		// or lose — never deferred to after resolution.
+		applyAssessment(mem, outcome.Assessment)
+		mirrorAssessment(input.agentState.memoryHandle, inst, outcome.Assessment)
+
+		if outcome.Candidate != nil {
+			candidates = append(candidates, decision.InstrumentCandidate{Instrument: inst, Outcome: outcome})
+		}
 	}
-	return core.OrderPunchRequest{}, false
+
+	if len(candidates) == 0 {
+		return core.OrderPunchRequest{}, false
+	}
+	winner := decision.ResolveOnePunch(candidates, input.agentState.agentRNG)
+
+	req, ok := decision.Execute(
+		*winner.Outcome.Candidate,
+		decision.AmbientInputs{
+			AccountID:      input.agentState.capitalHandle,
+			Instrument:     winner.Instrument,
+			Timeframe:      tf,
+			TradingCapital: input.agentState.tradingCapital,
+			Positions:      obs.Positions,
+		},
+		acc,
+		input.agentState.traits,
+		input.agentState.agentRNG,
+		input.decisionParams,
+	)
+	if !ok {
+		return core.OrderPunchRequest{}, false
+	}
+
+	// Commitment applies only now: resolution has already picked the
+	// one instrument whose order the seam actually allows, and 4c has
+	// just confirmed it is a real punch. Writing a commitment for any
+	// instrument other than the winner — or before 4c confirms — would
+	// make the agent believe it holds something it never actually
+	// ordered.
+	if winner.Outcome.Commitment != nil {
+		applyCommitment(input.agentState.perception[winner.Instrument], winner.Outcome.Commitment)
+		mirrorCommitment(input.agentState.memoryHandle, winner.Instrument, winner.Outcome.Commitment)
+	}
+
+	return req, true
+}
+
+// applyAssessment copies a node's reported working-memory update onto
+// the agent's carried instrumentMemory for this instrument. A nil delta
+// — always the case on the holding path, since 4d never reads or
+// updates this bookkeeping — is a no-op: the flat-path fields stay
+// exactly as they were from whenever this instrument was last flat.
+func applyAssessment(mem *instrumentMemory, delta *decision.AssessmentDelta) {
+	if delta == nil {
+		return
+	}
+	mem.standingOpinion = delta.StandingOpinion
+	mem.standingStance = delta.StandingStance
+	mem.lastDecidedReadings = delta.LastDecidedReadings
+	mem.pendingWatch = delta.PendingWatch
+	mem.waitStreak = delta.WaitStreak
+}
+
+// mirrorAssessment best-effort mirrors an applied assessment to Redis,
+// write-on-change only (skipped on a coast tick, per 4b's own working-
+// memory-setter invariant) — the in-memory working set is always the
+// live authority; Redis is a restart-recovery mirror only, so a failed
+// or skipped write is never surfaced to the caller.
+func mirrorAssessment(memoryHandle *RuntimeHandle, instrument string, delta *decision.AssessmentDelta) {
+	if delta == nil || !delta.Changed {
+		return
+	}
+	_ = memoryHandle.SetStandingOpinion(instrument, delta.StandingOpinion, delta.StandingStance)
+	_ = memoryHandle.SetWaitStreak(instrument, delta.WaitStreak)
+	_ = memoryHandle.SetLastDecidedReadings(instrument, delta.LastDecidedReadings)
+	_ = memoryHandle.SetPendingWatch(instrument, storePendingWatch(delta.PendingWatch))
+}
+
+// storePendingWatch converts decision's own PendingWatch (the type the
+// pure decision package returns) into store's identically-shaped
+// PendingWatch (the type RuntimeStore's setter accepts) — store depends
+// on neither package, so the two types stay structurally identical but
+// distinct, and this is the one place that bridges them.
+func storePendingWatch(pendingWatch *decision.PendingWatch) *store.PendingWatch {
+	if pendingWatch == nil {
+		return nil
+	}
+	return &store.PendingWatch{
+		Direction:    pendingWatch.Direction,
+		ConfirmsSeen: pendingWatch.ConfirmsSeen,
+		SinceTick:    pendingWatch.SinceTick,
+	}
+}
+
+// applyCommitment stamps the record of a real, just-placed order onto
+// the agent's carried instrumentMemory for the winning instrument.
+// Called only after one-punch resolution and only once Execute has
+// confirmed a real punch, so mem is always already present — the
+// instrument was visited (and its instrumentMemory constructed if
+// absent) earlier in this same traversal.
+func applyCommitment(mem *instrumentMemory, delta *decision.CommitmentDelta) {
+	mem.lastCommitTick = delta.LastCommitTick
+	positionContext := delta.PositionContext
+	mem.positionContext = &positionContext
+}
+
+// mirrorCommitment best-effort mirrors an applied commitment to Redis —
+// write-on-change by construction, since it is only ever called for the
+// one winning instrument on a real punch, never on every tick.
+func mirrorCommitment(memoryHandle *RuntimeHandle, instrument string, delta *decision.CommitmentDelta) {
+	_ = memoryHandle.SetLastCommitTick(instrument, delta.LastCommitTick)
+	positionContext := delta.PositionContext
+	_ = memoryHandle.SetPositionContext(instrument, &positionContext)
 }

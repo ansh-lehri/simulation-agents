@@ -72,18 +72,21 @@ type ManageInput struct {
 }
 
 // Manage decides what to do with an instrument the agent already
-// holds this tick: exit, add to the winning position, or hold. A
-// false second return means hold — emit nothing. Pure function, same
-// discipline as every other node in this package: no I/O, no Core
-// calls, no Redis; Manage reads only its ManageInput and returns a
-// value.
-func Manage(input ManageInput) (ExecIntent, bool) {
+// holds this tick: exit, add to the winning position, or hold. Returns
+// a zero-value NodeOutcome (every field nil) on hold — nothing to
+// apply, nothing to park. Manage never returns a non-nil Assessment:
+// the holding path does not read or update the flat-path's standing-
+// opinion/pending-watch/wait-streak bookkeeping, so there is nothing
+// for it to report there. Pure function, same discipline as every
+// other node in this package: no I/O, no Core calls, no Redis; Manage
+// reads only its ManageInput and returns a value.
+func Manage(input ManageInput) NodeOutcome {
 	// Step 0 — defensive guard only: root-dispatch has already proved
 	// this instrument is held before routing here. A zero quantity
 	// reaching this function means it is not this stage's tick to act
 	// on, not an error to raise.
 	if input.Position.Qty == 0 {
-		return ExecIntent{}, false
+		return NodeOutcome{}
 	}
 	if input.Traits.Exit == nil || input.Traits.MaxHold == nil || input.Traits.ThetaAct == nil || input.Traits.Disposition == nil {
 		panic("decision: Manage called on a TraitVector missing exit_profile/max_hold/theta_act/disposition — these are generated once at mint for every endogenous agent and must never be absent while holding a position")
@@ -93,15 +96,45 @@ func Manage(input ManageInput) (ExecIntent, bool) {
 	entryChannel, entryTick := liveEntryChannelAndTick(input.PositionContext, input.Tick.TickIndex)
 
 	if closeIntent, exit := checkExit(input, entryDirection, entryChannel, entryTick); exit {
-		return closeIntent, true
+		// A close never carries a commitment: positionContext is not
+		// cleared here — the close may not fill this tick, and a flat
+		// path's next COMMIT overwrites it on its own anyway.
+		return NodeOutcome{Candidate: &closeIntent}
 	}
 
 	unrealized := unrealizedPnL(input.CurrentPrice, input.Position.WeightedAvgEntry, input.Position.Qty)
-	if addIntent, add := checkAdd(input, entryDirection, unrealized); add {
-		return addIntent, true
+	if addIntent, addChannel, add := checkAdd(input, entryDirection, unrealized); add {
+		return NodeOutcome{
+			Candidate: &addIntent,
+			Commitment: &CommitmentDelta{
+				LastCommitTick: input.Tick.TickIndex,
+				PositionContext: store.PositionContext{
+					EntryDir:     entryDirectionLabel(entryDirection),
+					EntryChannel: addChannel,
+					EntryTick:    input.Tick.TickIndex,
+				},
+			},
+		}
 	}
 
-	return ExecIntent{}, false
+	return NodeOutcome{}
+}
+
+// channelOf maps a mixer opinion's dominant trait to the structural
+// channel its entry was stamped against: trend's lean channel is
+// chart, mean-reversion's is range. The noise-coin impulse (4b's entry
+// path only — the add-check never rolls it) reads no structure at all,
+// so it maps to "noise", matching the sentinel levelsFor and
+// reversalTriggered already treat as "nothing to look up."
+func channelOf(dominantTrait string) string {
+	switch dominantTrait {
+	case traitTrend:
+		return "chart"
+	case traitMeanRev:
+		return "range"
+	default:
+		return "noise"
+	}
 }
 
 // ExecIntentActionAdd marks a scale-into-the-position request for an
@@ -125,8 +158,10 @@ const ExecIntentActionAdd ExecIntentAction = "add"
 // currently in profit (add to winners, not losers), and the opinion's
 // conviction clears θ_add — a deliberately higher bar than the entry
 // bar θ_act, by cfg.Params.ThetaAddMargin. Any one condition failing
-// is a hold, not a partial action.
-func checkAdd(input ManageInput, entryDirection float64, unrealized int64) (ExecIntent, bool) {
+// is a hold, not a partial action. The second return is the channel
+// the winning opinion's dominant trait reads from (chart/range) — the
+// re-stamp Manage applies to positionContext on a real add.
+func checkAdd(input ManageInput, entryDirection float64, unrealized int64) (ExecIntent, string, bool) {
 	bundle := PerceptionBundle{}
 	if input.Bundle != nil {
 		bundle = *input.Bundle
@@ -134,7 +169,7 @@ func checkAdd(input ManageInput, entryDirection float64, unrealized int64) (Exec
 	verdicts := interpret(bundle, input.Traits, input.Roles, input.Params.Interpretation)
 	opinion := mix(verdicts, *input.Traits.Disposition, input.RNG, input.Params.Mixer)
 	if opinion == nil {
-		return ExecIntent{}, false
+		return ExecIntent{}, "", false
 	}
 
 	thetaAdd := *input.Traits.ThetaAct + input.Params.ThetaAddMargin
@@ -143,9 +178,9 @@ func checkAdd(input ManageInput, entryDirection float64, unrealized int64) (Exec
 	convictionClearsBar := opinion.Conviction >= thetaAdd
 
 	if !sameDirection || !inProfit || !convictionClearsBar {
-		return ExecIntent{}, false
+		return ExecIntent{}, "", false
 	}
-	return ExecIntent{Action: ExecIntentActionAdd, Direction: entryDirection, Conviction: opinion.Conviction}, true
+	return ExecIntent{Action: ExecIntentActionAdd, Direction: entryDirection, Conviction: opinion.Conviction}, channelOf(opinion.DominantTrait), true
 }
 
 // checkExit evaluates this tick's exit condition. A level-mode agent

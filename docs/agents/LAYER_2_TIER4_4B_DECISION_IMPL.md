@@ -165,6 +165,8 @@ else:
 
 Output of 4b: per flat instrument, either one decision.ExecIntent{action:open, dir, conviction:eff_conv} or none. Not here (tree-assembly phase, after 4d): the flat/holding root dispatch and the candidate→one-punch resolution across instruments.
 
+SUPERSEDED by LAYER_2_TIER4_TREE_ASSEMBLY_IMPL.md §6: the inline `lastCommitTick = current_tick` stamps in §7/§9 above are no longer written inline — decision.Decide is side-effect-free and reports a commitmentDelta instead (lastCommitTick + the positionContext stamp, including EntryChannel derived from the mixer's dominant trait); the tree-assembly phase applies it only for the resolved winner, after a real punch. The computation above (the gate/mixer/commit-gate chain and its COMMIT/WAIT/SKIP outcome) is unchanged — only how the result gets reported changed.
+
 10. New generated traits Tier-4 introduces (codebase additions)
 
 Designed/locked already (4b-2 thread); absent from code. Add to agent.TraitVector as endogenous-only omitempty pointers (same pattern as Rho/Phi), and draw them in orchestrator/generator (a draw_commit_gate.go beside draw_perception.go), values from new GenParams ranges in cmd/agentsd/calibration.go:

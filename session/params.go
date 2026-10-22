@@ -95,6 +95,14 @@ type Params struct {
 	// during the action tick; calibration-only — no logic lives here.
 	Perception decision.PerceptionParams
 
+	// Decision carries the calibration surface for the flat-agent entry
+	// decision, the holding-agent position-management checks, and the
+	// shared order-execution sizing/pricing/noise dials — every dial
+	// decide()'s tree-assembly body passes into decision.Decide,
+	// decision.Manage, and decision.Execute. Calibration-only — no logic
+	// lives here, same as Perception above.
+	Decision decision.Params
+
 	// LifecycleCurve holds the baseline lifecycle-rate dials and
 	// curve-shape parameters for the presence sweep. A scenario's
 	// CurveEffective overrides only the three rates (step-out,
@@ -116,9 +124,9 @@ type Params struct {
 // session regardless of scenario.
 type LifecycleCurveParams struct {
 	// The three heights that a scenario's CurveEffective may override.
-	StepOutRate  float64 // plateau height of the step-out intensity curve
-	DoneRate     float64 // peak height of the done-early intensity curve
-	ReentryRate  float64 // peak probability of the re-entry Gaussian
+	StepOutRate float64 // plateau height of the step-out intensity curve
+	DoneRate    float64 // peak height of the done-early intensity curve
+	ReentryRate float64 // peak probability of the re-entry Gaussian
 
 	// Ramp shapes for the time-based curves; never scenario-shifted.
 	StepOutTauRamp float64 // τ_out: how quickly step-out intensity ramps up through the session
@@ -214,9 +222,9 @@ func DefaultEntryCurveParams() EntryCurveParams {
 func DefaultLifecycleCurveParams() LifecycleCurveParams {
 	return LifecycleCurveParams{
 		// Rates — scenario-overridable
-		StepOutRate: 0.05,  // low: most active agents stay active per check
-		DoneRate:    0.04,  // low at open, spikes near close
-		ReentryRate: 0.70,  // peak per-check re-entry probability at μ_break
+		StepOutRate: 0.05, // low: most active agents stay active per check
+		DoneRate:    0.04, // low at open, spikes near close
+		ReentryRate: 0.70, // peak per-check re-entry probability at μ_break
 
 		// Ramp shapes
 		StepOutTauRamp: 0.20, // step-out ramps up through ~20% of session

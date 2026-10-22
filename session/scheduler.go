@@ -201,6 +201,7 @@ func (sched *LiveScheduler) runActionPhase(ctx context.Context, ws *workingSet, 
 			},
 			tick:             tick,
 			perceptionParams: sched.params.Perception,
+			decisionParams:   sched.params.Decision,
 			timeframes:       sched.params.ConfiguredTimeframes,
 		}
 		if req, punchNeeded := sched.decideFunc(input); punchNeeded {
@@ -227,9 +228,10 @@ func (sched *LiveScheduler) runActionPhase(ctx context.Context, ws *workingSet, 
 // that sets present=false; agents skip that instrument this tick.
 func (sched *LiveScheduler) snapshot(ctx context.Context, ws *workingSet) *snapshotView {
 	view := &snapshotView{
-		candles: make(map[string]map[string][]store.Candle, len(ws.instruments)),
-		quote:   make(map[string]store.Quote, len(ws.instruments)),
-		present: make(map[string]bool, len(ws.instruments)),
+		candles:     make(map[string]map[string][]store.Candle, len(ws.instruments)),
+		quote:       make(map[string]store.Quote, len(ws.instruments)),
+		present:     make(map[string]bool, len(ws.instruments)),
+		instruments: ws.instruments,
 	}
 	for _, instrument := range ws.instruments {
 		tfCandles := make(map[string][]store.Candle, len(sched.params.ConfiguredTimeframes))
