@@ -57,8 +57,8 @@ func (handle *RuntimeHandle) SetLastDecidedReadings(instrument string, readings 
 	return handle.runtimeStore.SetLastDecidedReadings(handle.ctx, handle.exchangeID, handle.agentID, instrument, readings)
 }
 
-func (handle *RuntimeHandle) SetPositionContext(positionContext *store.PositionContext) error {
-	return handle.runtimeStore.SetPositionContext(handle.ctx, handle.exchangeID, handle.agentID, positionContext)
+func (handle *RuntimeHandle) SetPositionContext(instrument string, positionContext *store.PositionContext) error {
+	return handle.runtimeStore.SetPositionContext(handle.ctx, handle.exchangeID, handle.agentID, instrument, positionContext)
 }
 
 func (handle *RuntimeHandle) SetTipFollowState(
@@ -81,10 +81,11 @@ func (handle *RuntimeHandle) SetPerceptionRefs(instrument string, refs store.Per
 // refs/lastBundle are perception's working memory, compared against
 // current market readings to decide whether to rerun perception.
 // standingOpinion/standingStance/lastDecidedReadings/pendingWatch/
-// waitStreak/lastCommitTick are the decision stage's working memory,
-// read and written by whichever future seam calls into the decision
-// package's gate/mixer/commit-gate chain for this agent and this
-// instrument — this struct only carries the fields, it does not
+// waitStreak/lastCommitTick/positionContext are the decision stage's
+// working memory, read and written by whichever future seam calls
+// into the decision package's gate/mixer/commit-gate chain (while
+// flat) or its position-exit chain (while holding) for this agent and
+// this instrument — this struct only carries the fields, it does not
 // mutate them itself.
 type instrumentMemory struct {
 	refs       store.PerceptionRefs
@@ -96,6 +97,8 @@ type instrumentMemory struct {
 	pendingWatch        *decision.PendingWatch // nil when not waiting on a confirmation
 	waitStreak          int                    // consecutive coasted WAIT ticks; anti-freeze counter for the quiet-confirm fix
 	lastCommitTick      int64                  // tick of this agent's last commit on this instrument; the Go zero value (0) is NOT the "never committed" sentinel — whoever first constructs an instrumentMemory for an agent's decision stage must set this to decision.NoPriorCommit explicitly, or the very first cooldown check will misread a fresh instrument as having committed at tick zero
+
+	positionContext *store.PositionContext // entry conditions of this instrument's currently open position, read by the position-exit stage while holding; nil while flat or before any stamp exists (e.g. just after a restart)
 }
 
 // workingAgent is one agent's in-memory state for the duration of a
