@@ -78,9 +78,10 @@ type Params struct {
 
 	// ThetaAddMargin is the amount added to an agent's ThetaAct to
 	// derive ThetaAdd — the (higher) bar for adding to an already-open
-	// position. It is defined here, at the one place decision.Params
-	// is first introduced, but nothing in this package reads it yet;
-	// the add-position stage is the consumer.
+	// position, read by this package's add-check (manage.go). Defined
+	// here, at the one place decision.Params is first introduced.
+	// Must stay >= 0: that is what guarantees ThetaAdd is never laxer
+	// than the entry bar ThetaAct.
 	ThetaAddMargin float64
 
 	// MaxFrac is the largest fraction of an agent's free capital a

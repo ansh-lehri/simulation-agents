@@ -37,5 +37,8 @@ What this doc is. The roads-not-taken for the Tier-4 implementation design — e
 3	opposite-dir-while-holding	IGNORE (drop; bool=false) — guard only	treat as reduce/flip in 4c	Reduce/flip is 4d's branch; root dispatch means it shouldn't reach 4c. Kept as a safety guard.
 4	θ_market placement	Global calibration dial	per-agent generated trait	Per-agent variation already comes from aggressiveness; a global cutoff suffices.
 5	Pre-flight reliance	Build valid-by-construction; core pre-flight is a guard	let core.validateOrderPunchRequest shape/reject	A rejected punch is silently dropped (fire-and-forget) — correctness must live in 4c, not the guard.
+4d — Position & Exit
+#	Decision	Chosen	Alternative(s) not chosen	Why deferred / revisit
+1	Add-check and the noise coin	Add-check calls interpret+mix directly — the mixer's signal-only path — never noiseImpulse	let a noise-coin hit also qualify as an add trigger	An add is a signal-driven scaling decision on an already-live position; the noise coin is an entry-liveness impulse for a flat agent (framing §7), not a reason to pyramid a position that's already open. Revisit only if a future design wants a noise-driven add, which would need its own gate (noise has no conviction/direction tied to the held position's own channel).
 
-End — Tier-4 implementation alternatives (4a, 4b, 4c). Extend per sub-step.
+End — Tier-4 implementation alternatives (4a, 4b, 4c, 4d). Extend per sub-step.
