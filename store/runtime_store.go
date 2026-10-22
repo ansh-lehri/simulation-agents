@@ -15,13 +15,13 @@ import (
 // hash backs — but only its flat, per-agent fields. Every per-instrument
 // field (perception gate refs, decision working memory: standing
 // opinion/stance, wait streak, last-decided readings, pending watch,
-// last commit tick) is deliberately NOT represented here, the same way
-// PerceptionRefs isn't: a single flat field can't hold one value per
-// instrument an agent watches, and turning every one of them into a
-// map would make this type track the per-instrument field-name helpers
-// in keys.go redundantly. Whatever downstream stage builds the runtime
-// snapshot reader reads those per-instrument blobs directly by field
-// name instead.
+// last commit tick, position context) is deliberately NOT represented
+// here, the same way PerceptionRefs isn't: a single flat field can't
+// hold one value per instrument an agent watches, and turning every one
+// of them into a map would make this type track the per-instrument
+// field-name helpers in keys.go redundantly. Whatever downstream stage
+// builds the runtime snapshot reader reads those per-instrument blobs
+// directly by field name instead.
 //
 // Never carries frozen traits (those live in Postgres) and never carries
 // positions / cash / P&L (those are broker-owned, re-read fresh each use).
@@ -32,9 +32,6 @@ type RuntimeSnapshot struct {
 	EntryTime      float64 // normalized position in [0,1] over [session_start, session_end]; one-shot DORMANT→ACTIVE trigger
 	NextCheckTime  int64   // staggered lifecycle re-check timestamp
 	IdleSince      int64   // start of the current IDLE run, for the re-entry roll
-
-	// Position / exit working memory (while an endogenous agent is holding).
-	PositionContext *PositionContext
 
 	// Tip-following state (herd agents).
 	LastActedTipID string
@@ -148,9 +145,13 @@ type RuntimeStore interface {
 	SetLastDecidedReadings(ctx context.Context, exchangeID string, agentID agent.AgentID, instrument string, readings map[string]float64) error
 
 	// SetPositionContext writes the entry conditions of the agent's
-	// current open position. A nil positionContext clears the field,
-	// signalling that the agent is currently flat.
-	SetPositionContext(ctx context.Context, exchangeID string, agentID agent.AgentID, positionContext *PositionContext) error
+	// currently open position on one instrument. A nil positionContext
+	// clears the field, signalling that the agent is flat on that
+	// instrument. Stored as a per-instrument JSON blob, mirroring
+	// SetPendingWatch/SetLastCommitTick, because an agent holding more
+	// than one instrument carries one independent entry record per
+	// instrument.
+	SetPositionContext(ctx context.Context, exchangeID string, agentID agent.AgentID, instrument string, positionContext *PositionContext) error
 
 	// SetTipFollowState writes the full tip-following snapshot for a
 	// herd agent: the tracking target, the last tip it acted on, and
@@ -285,18 +286,18 @@ func (redisStore *RedisRuntimeStore) SetLastDecidedReadings(ctx context.Context,
 	return nil
 }
 
-func (redisStore *RedisRuntimeStore) SetPositionContext(ctx context.Context, exchangeID string, agentID agent.AgentID, positionContext *PositionContext) error {
+func (redisStore *RedisRuntimeStore) SetPositionContext(ctx context.Context, exchangeID string, agentID agent.AgentID, instrument string, positionContext *PositionContext) error {
 	key := RuntimeKey(exchangeID, agentID)
 	var encoded string
 	if positionContext != nil {
 		raw, err := json.Marshal(positionContext)
 		if err != nil {
-			return fmt.Errorf("store: marshal position context for %s on %s: %w", agentID, exchangeID, err)
+			return fmt.Errorf("store: marshal position context for %s/%s on %s: %w", agentID, instrument, exchangeID, err)
 		}
 		encoded = string(raw)
 	}
-	if err := redisStore.client.HSet(ctx, key, FieldPositionContext, encoded).Err(); err != nil {
-		return fmt.Errorf("store: set position context for %s on %s: %w", agentID, exchangeID, err)
+	if err := redisStore.client.HSet(ctx, key, PositionContextField(instrument), encoded).Err(); err != nil {
+		return fmt.Errorf("store: set position context for %s/%s on %s: %w", agentID, instrument, exchangeID, err)
 	}
 	return nil
 }
