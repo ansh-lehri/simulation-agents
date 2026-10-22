@@ -1,6 +1,6 @@
 Layer 2 — Tier 3: The Runtime Loop (Implementation Design)
 
-What this doc is. The build specification for the runtime loop — the per-exchange goroutine's post-go-live tick. It translates L2_TIER3_RUNTIME_LOOP_DESIGN (the design, D1–D12) against the real shipped signatures read from the simulation-agents repo on 2026-10-19 (core/, store/, orchestrator/, scenario/, cmd/agentsd/). Point format matches L2_TIER2_IMPLEMENTATION_DESIGN: what it is / expected & why / cross-layer / ingress-egress / the implementation / decisions.
+What this doc is. The build specification for the runtime loop — the per-exchange goroutine's post-go-live tick. It translates L2_TIER3_RUNTIME_LOOP_DESIGN (the design, D1–D12) against the real shipped signatures read from the simulation-agents repo on 2026-10-21 (core/, store/, orchestrator/, scenario/, cmd/agentsd/). Point format matches L2_TIER2_IMPLEMENTATION_DESIGN: what it is / expected & why / cross-layer / ingress-egress / the implementation / decisions.
 
 Grounding. Code is illustrative of shape/contract, not compile-ready Go (project rule: impl altitude = interfaces/structs/pseudo-logic/ingress-egress). Every seam below is pinned to a signature actually in the tree; where this doc's earlier Phase-3-era orientation was stale, the as-built signature wins. New impl-level choices are tagged [decided here]. (The one cross-doc inference — the rate→curve-constant binding, Point 8a — was flagged [confirm] and is now confirmed by Ansh, 2026-10-19.) The 3b transition math is reproduced verbatim from LAYER_2_LIFECYCLE (the lifecycle-math doc), with trait factors f_i = 1 and fatigue c_fat = 0 (prototype), per D7.
 
@@ -9,7 +9,7 @@ Scope — Tier 3 only.
 In: the store/wiring prerequisites Tier 3 binds to, the handoff contract into startScheduler, the in-memory working set, the two-cadence loop, the 3a action tick (snapshot → decide → collect → emit), the dispatcher + fire-and-forget punch, the 3b presence sweep (curve builder, two clocks, verbatim rolls, write split), the LifecycleDecision channel + orchestrator drain, the degrade-not-abort failure policy.
 Out — NOT this doc: the 2b/2c bodies continueBringUp / runAgentPopulation (Phase 5, the orchestrator-integration phase — Tier 3 defines the seam it is handed, never the body); the decide() internals — perception/mixer/execution/exit (Tier 4; 3a provides the seam only); the scenario machinery that produces curve_eff (the scenario/ package — already shipped; Tier 3 only consumes the four rates); RETIRE execution (square-off → quit roll → Core close), restart rebuild (the runtime reader), WS reconnect, abort-cleanup (Tier 6).
 
-Boundary with Phase 5 (explicit). Phase 5 owns the goroutine body: it stamps entry_time, runs the pre-open ops (per-agent join = session-load, history pull, WS subscribe + the ingest goroutine), waits for go-live, reads sessions:active, and calls startScheduler(...). Tier 3 begins at that call. Tier 3 declares what startScheduler must be handed (Point 2) and the stores/wiring it binds to (Point 1); it does not spec how Phase 5 fills them.
+Boundary with Phase 5 (explicit). Phase 5 owns the goroutine body: it stamps entry_time, runs the pre-open ops (per-agent join = session-load, history pull, WS subscribe + the ingest goroutine), waits for go-live, reads sessions:active, and calls StartScheduler(...). Tier 3 begins at that call. Tier 3 declares what StartScheduler must be handed (Point 2) and the stores/wiring it binds to (Point 1); it does not spec how Phase 5 fills them.
 
 Point 1 — Store & wiring prerequisites (the Tier-3 deltas, against real signatures)
 
@@ -70,9 +70,10 @@ SetPerceptionRefs(ctx, ex, id string, refs PerceptionRefs) error   // 4a gate ca
 (d) RuntimeHandle — the bound working-memory accessor [decided here]. The shipped writers all take (ctx, exchangeID, agentID, …). Rather than have decide() juggle (ex, id) on every write, Tier 3 hands Tier 4 a small bound handle:
 
 go
-type RuntimeHandle struct { rt store.RuntimeStore; ctx context.Context; ex string; id agent.AgentID }
-// methods forward to rt with ex/id bound: h.SetStandingOpinion(op, stance), h.SetWaitStreak(n),
-//   h.SetPositionContext(pc), h.SetPerceptionRefs(refs), … and matching in-memory getters.
+type RuntimeHandle struct { runtimeStore store.RuntimeStore; ctx context.Context; exchangeID string; agentID agent.AgentID }
+// methods forward to runtimeStore with exchangeID/agentID bound:
+//   h.SetStandingOpinion(op, stance), h.SetWaitStreak(n), h.SetPositionContext(pc),
+//   h.SetPerceptionRefs(refs), h.SetTipFollowState(tracking, lastActedTipID, exitLevel, submitAt)
 
 Not a shipped type — an ergonomic Tier-3 invention so the Tier-4 seam is one object. Working-memory Redis writes go direct on the goroutine (D6).
 
@@ -92,37 +93,43 @@ go
 (g) New config dials on OrchestratorConfig [decided here]. As-built config has PopulationSize/LifecycleBuffer/CapitalParams/ValidScenarioNames. Add:
 
 go
-TAction        time.Duration   // action-tick floor (D1)
-TPresence      time.Duration   // presence-sweep cadence; ≫ TAction (D1)
-MaxLookbackK   int             // bounded candle-window size (Point 1b/5a)
-PunchBuffer    int             // dispatcher channel buffer (Point 7)
-LifecycleCurve LifecycleCurveParams  // Tier 3's OWN curve calibration (Point 8a)
+TAction          time.Duration   // action-tick floor (D1)
+TPresence        time.Duration   // presence-sweep cadence; ≫ TAction (D1)
+MaxLookbackK     int             // bounded candle-window size (Point 1b/5a)
+PunchBuffer      int             // dispatcher channel buffer (Point 7)
+CheckIntervalMin time.Duration   // lower bound of per-agent recurring check interval (baseline: 20 min)
+CheckIntervalMax time.Duration   // upper bound of per-agent recurring check interval (baseline: 40 min)
+LifecycleCurve   LifecycleCurveParams  // Tier 3's OWN curve calibration (Point 8a)
 
-All calibration dials, none fixed in design. LifecycleCurveParams is the Tier-3-owned baseline rates + shapes (Point 8a).
+All calibration dials, none fixed in design. Zero values for CheckIntervalMin/CheckIntervalMax fall back to the [20 min, 40 min] baseline from the lifecycle design. LifecycleCurveParams is the Tier-3-owned baseline rates + shapes (Point 8a).
 
 Decisions. The field-constant names and RuntimeHandle are [decided here]. The runtime reader (ReadSnapshot) is named only — Tier 6 builds it for the restart rebuild; Tier 3 never reads runtime on the live path (it builds the working set from the in-memory population handover, Point 4).
 
 Point 2 — The handoff contract into Tier 3
 
-What it is. What startScheduler must be handed. This is the Tier-3 ↔ Phase-5 seam.
+What it is. What StartScheduler must be handed. This is the Tier-3 ↔ Phase-5 seam.
 
-Expected & why. Tier 3 is reached by Phase 5's runAgentPopulation calling o.startScheduler(...) on the per-exchange goroutine, after persist/snapshot/entry-stamp/pre-open/go-live. Everything Tier 3 needs must arrive in that call; Tier 3 does not read sessions:active (Phase 5 owns that read — the reader doesn't exist yet and is Phase 5's to build).
+Expected & why. Tier 3 is reached by Phase 5's goroutine calling the Scheduler interface's StartScheduler on the per-exchange goroutine, after persist/snapshot/entry-stamp/pre-open/go-live. Everything Tier 3 needs must arrive in that call; Tier 3 does not read sessions:active (Phase 5 owns that read — the reader doesn't exist yet and is Phase 5's to build).
 
-Ingress/egress. Ingress: the four inputs below. Egress: a running loop + dispatcher; the lifecycle channel feeds the orchestrator drain (Point 9).
+Ingress/egress. Ingress: the five inputs below. Egress: a running loop + dispatcher; the lifecycle channel feeds the orchestrator drain (Point 9).
 
 The implementation.
 
 go
-func (o *Orchestrator) startScheduler(
-    request   transport.BringUpRequest,         // clock (SessionStart/SessionEnd), Instruments, ExchangeID, SessionType
-    population Population,                       // generator.Population{Existing, New}; .All() iterates both
-    curveEff  *generator.CurveEffective,        // nil = baseline (Tier 3 uses its own rates); non-nil = four shifted rates
-    lifecycleCh chan LifecycleDecision,          // created in 2b (buffer = OrchestratorConfig.LifecycleBuffer)
-)
+// session/interfaces.go — the Scheduler seam the Runner holds and LiveScheduler implements
+type Scheduler interface {
+    StartScheduler(
+        ctx         context.Context,
+        request     transport.BringUpRequest,      // clock (SessionStart/SessionEnd), Instruments, ExchangeID, SessionType
+        population  generator.Population,          // generator.Population{Existing, New}; .All() iterates both
+        curveEff    *generator.CurveEffective,     // nil = baseline; non-nil = four shifted rates
+        lifecycleCh chan<- LifecycleDecision,       // created in 2b (buffer = OrchestratorConfig.LifecycleBuffer)
+    )
+}
 
 curveEff is the whole of the scenario carry. Per the corrected model: baseline session → curveEff == nil → 3b uses its own baseline rates (Point 8a); scenario session → curveEff != nil → 3b uses the four shifted rates. However Phase 5 obtains it (reads sessions:active, or re-resolves the scenario) is Phase 5's call.
 
-Decisions. [decided here] Tier 3 takes curveEff as a parameter rather than reading sessions:active itself — keeps Tier 3 out of the (Phase-5-owned) session-store reader and keeps startScheduler's inputs explicit. Of the four rates, Tier 3 consumes three (StepOut/Done/Reentry); EntryRate is consumed by 2c's entry-time stamping (Phase 5), not by Tier 3 — the entry curve is realized at entry-stamp time, not in the Tier-3 curve builder.
+Decisions. [decided here] Tier 3 takes curveEff as a parameter rather than reading sessions:active itself — keeps Tier 3 out of the (Phase-5-owned) session-store reader and keeps StartScheduler's inputs explicit. Of the four rates, Tier 3 consumes three (StepOut/Done/Reentry); EntryRate is consumed by 2c's entry-time stamping (Phase 5), not by Tier 3 — the entry curve is realized at entry-stamp time, not in the Tier-3 curve builder.
 
 Point 3 — startScheduler (the ignition)
 
@@ -131,15 +138,19 @@ What it is. Build the working set, realize the lifecycle curves once, spawn the 
 The implementation.
 
 go
-func (o *Orchestrator) startScheduler(request …, population …, curveEff *generator.CurveEffective, lifecycleCh …) {
-    ws     := o.buildWorkingSet(request, population)                 // Point 4
-    curves := o.buildLifecycleCurves(curveEff, ws.rng)              // Point 8a — baseline-or-shifted
-    punchCh := make(chan core.OrderPunchRequest, o.config.PunchBuffer)
-    go o.runDispatcher(request.ExchangeID, punchCh)                  // Point 7
-    o.runLoop(request, ws, curves, punchCh, lifecycleCh)            // Point 5 — blocks until session end / Tier-6 teardown
+// session/scheduler.go — LiveScheduler is the real Scheduler implementation
+func (sched *LiveScheduler) StartScheduler(
+    ctx context.Context, request transport.BringUpRequest,
+    population generator.Population, curveEff *generator.CurveEffective, lifecycleCh chan<- LifecycleDecision,
+) {
+    ws      := sched.buildWorkingSet(ctx, request, population)               // Point 4
+    curves  := buildLifecycleCurves(curveEff, sched.params.LifecycleCurve, ws.sessionRNG)  // Point 8a
+    punchCh := make(chan core.OrderPunchRequest, sched.params.PunchBuffer)
+    go sched.runDispatcher(ctx, request.ExchangeID, punchCh)                 // Point 7
+    sched.runLoop(ctx, request, ws, curves, punchCh, lifecycleCh)            // Point 5 — blocks until session end / ctx done
 }
 
-Decisions. [decided here] startScheduler runs the loop synchronously — it is the goroutine's tail (the goroutine was spawned by 2b's go o.continueBringUp → runAgentPopulation). The only new goroutine Tier 3 spawns is the dispatcher; the 2c ingest goroutine is already running (Phase 5).
+Decisions. [decided here] StartScheduler runs the loop synchronously — it is the goroutine's tail (the goroutine was spawned by 2b's go o.continueBringUp → runAgentPopulation). The only new goroutine Tier 3 spawns is the dispatcher; the 2c ingest goroutine is already running (Phase 5).
 
 Point 4 — The in-memory working set (the goroutine's authority)
 
@@ -151,24 +162,27 @@ The implementation.
 
 go
 type workingAgent struct {
-    traits        agent.TraitVector   // frozen (from population)
-    capitalHandle string              // Core identity at order time (agent.CapitalHandle)
-    capital       int64               // session A (agent.TradingCapital)
-    presence      string              // store.PresenceDormant|Active|Idle|Done|Retired (starts DORMANT)
-    entryTime     float64             // normalized [0,1]; stamped in 2c, read here
-    nextCheckTime int64               // clock-2 re-arm (unix); set on ACTIVATE
-    idleSince     int64               // stamped on step-out→IDLE; feeds re-entry/give-up
-    wm            *RuntimeHandle       // Tier-4 working-memory + 4a gate-state accessor (Point 1d)
+    traits         agent.TraitVector   // frozen (from population)
+    capitalHandle  string              // Core identity at order time (agent.CapitalHandle)
+    tradingCapital int64               // session capital A (agent.TradingCapital)
+    presence       string              // store.PresenceDormant|Active|Idle|Done|Retired (starts DORMANT)
+    entryTime      float64             // normalized [0,1]; stamped in 2c, read here
+    nextCheckTime  int64               // Clock-2 re-arm wall-clock (unix seconds); set on ACTIVATE
+    lastCheckTime  int64               // previous Clock-2 check wall-clock (unix seconds); Δ = now − lastCheckTime
+    idleSince      int64               // stamped on step-out→IDLE; feeds re-entry/give-up idle-duration
+    memoryHandle   *RuntimeHandle      // Tier-4 working-memory + 4a gate-state accessor (Point 1d)
 }
 type workingSet struct {
-    agents map[agent.AgentID]*workingAgent  // full set
-    active map[agent.AgentID]*workingAgent  // derived ACTIVE subset (starts empty) — a Go map (D: see below)
-    start, end time.Time                     // request.SessionStart/SessionEnd — the scheduler clock
-    instruments []string
-    rng *rand.Rand                           // fresh seeded (LIVE); act-coin + emit shuffle + lifecycle rolls
+    agents       map[agent.AgentID]*workingAgent  // full set
+    active       map[agent.AgentID]*workingAgent  // derived ACTIVE subset (starts empty) — plain Go map
+    sessionStart time.Time                        // request.SessionStart — the scheduler open clock
+    sessionEnd   time.Time                        // request.SessionEnd  — the scheduler close clock
+    instruments  []string
+    sessionRNG   *rand.Rand                       // fresh seeded (LIVE); act-coin + emit shuffle + lifecycle rolls
+    exchangeID   string                           // from request.ExchangeID; carried for all Redis key calls
 }
 
-Decisions. [decided here] The ACTIVE subset is a plain Go map — Ansh confirmed the seeded/tuning mode need not reproduce the action phase agent-for-agent, so map-iteration randomness under a fixed seed is acceptable; no ordered-slice machinery. Not-loaded agents are excluded at build — agents whose pre-open per-agent join failed (Phase 5 marks them) never enter agents, so they never tick or sweep (handover §5). entryTime comes from the 2c stamp. wm binds (rt, ex, id). Positions/cash/P&L are never in workingAgent — read fresh via GetObservation inside decide() (ownership spine).
+Decisions. [decided here] The ACTIVE subset is a plain Go map — Ansh confirmed the seeded/tuning mode need not reproduce the action phase agent-for-agent, so map-iteration randomness under a fixed seed is acceptable; no ordered-slice machinery. Not-loaded agents are excluded at build — agents whose pre-open per-agent join failed (Phase 5 marks them) never enter agents, so they never tick or sweep (handover §5). entryTime comes from the 2c stamp. memoryHandle binds (runtimeStore, ctx, exchangeID, agentID). Positions/cash/P&L are never in workingAgent — read fresh via GetObservation inside decide() (ownership spine).
 
 Point 5 — The loop (two cadences on one goroutine, sleep-to-next) — D1
 
@@ -179,18 +193,24 @@ Expected & why. TAction is a floor, not a guarantee — the sleep is computed af
 The implementation.
 
 go
-func (o *Orchestrator) runLoop(request …, ws *workingSet, curves *lifecycleCurves, punchCh …, lifeCh …) {
+func (sched *LiveScheduler) runLoop(ctx context.Context, request transport.BringUpRequest,
+    ws *workingSet, curves *lifecycleCurves, punchCh chan core.OrderPunchRequest, lifeCh chan<- LifecycleDecision,
+) {
     var lastAction, lastPresence time.Time
-    for !o.sessionOver(request) {                                     // sessionOver = Tier-6/clock hook (Point 10)
+    for {
+        select { case <-ctx.Done(): return; default: }
+        if time.Now().After(request.SessionEnd) { return }   // session-over check (Tier-6 teardown hook)
         now := time.Now()
-        if now.Sub(lastAction)   >= o.config.TAction   { o.runActionPhase(ws, curves, punchCh); lastAction = now }     // 3a
-        if now.Sub(lastPresence) >= o.config.TPresence { o.runPresencePhase(ws, curves, lifeCh); lastPresence = now }  // 3b
-        nextDue := minTime(lastAction.Add(o.config.TAction), lastPresence.Add(o.config.TPresence))
-        time.Sleep(maxDur(0, nextDue.Sub(time.Now())))                // clamps to 0 under heavy load
+        if now.Sub(lastAction)   >= sched.params.TAction   { sched.runActionPhase(ctx, ws, punchCh); lastAction = now }
+        if now.Sub(lastPresence) >= sched.params.TPresence { sched.runPresencePhase(ctx, ws, curves, now, lifeCh); lastPresence = now }
+        nextDue := earliestTime(lastAction.Add(sched.params.TAction), lastPresence.Add(sched.params.TPresence))
+        if sleepDur := nextDue.Sub(time.Now()); sleepDur > 0 {
+            select { case <-time.After(sleepDur): case <-ctx.Done(): return }  // ctx-aware sleep (clamps to 0 under load)
+        }
     }
 }
 
-Decisions. [decided here] TAction/TPresence are config dials (Point 1g). sessionOver is a Tier-6/clock hook — prototype placeholder = time.Now() >= request.SessionEnd; real teardown/WindDown is Tier 6. 1 tick = TAction; the presence sweep is not a "tick."
+Decisions. [decided here] TAction/TPresence are config dials (Point 1g). The session-over check is time.Now().After(request.SessionEnd) inline (prototype placeholder); real teardown/WindDown is Tier 6. The sleep uses a select over ctx.Done() so a cancelled context wakes the loop immediately rather than waiting for the full sleep interval. 1 tick = TAction; the presence sweep is not a "tick."
 
 Point 6 — 3a: the ACTION phase (the hot path, 4 steps) — D2, D3
 
@@ -201,61 +221,73 @@ Expected & why. Read the market once per tick and share it; iterate the ACTIVE s
 The implementation.
 
 go
-func (o *Orchestrator) runActionPhase(ws *workingSet, curves *lifecycleCurves, punchCh chan core.OrderPunchRequest) {
-    view := o.snapshot(ws)                                          // 1 SNAPSHOT (Point 6a)
+func (sched *LiveScheduler) runActionPhase(ctx context.Context, ws *workingSet, punchCh chan core.OrderPunchRequest) {
+    view  := sched.snapshot(ctx, ws)                                     // 1 SNAPSHOT (Point 6a)
     batch := make([]core.OrderPunchRequest, 0, len(ws.active))
-    for _, a := range ws.active {                                   // 2 DECIDE — ACTIVE subset only
-        if ws.rng.Float64() >= a.traits.PAct { continue }           // per-tick act-coin (stateless, session RNG)
-        in := DecideInput{ agent: a, market: view,
-            observe: func() (core.AccountObservation, error) { return o.core.GetObservation(o.ctx, a.capitalHandle) } }
-        if req, ok := decide(in); ok { batch = append(batch, req) } // 3 COLLECT — pure gather
+    for _, agentRecord := range ws.active {                              // 2 DECIDE — ACTIVE subset only
+        if ws.sessionRNG.Float64() >= agentRecord.traits.PAct { continue }  // per-tick act-coin (stateless, session RNG)
+        capitalHandle := agentRecord.capitalHandle
+        in := decideInput{ agentState: agentRecord, market: view,
+            observe: func() (core.AccountObservation, error) { return sched.core.GetObservation(ctx, capitalHandle) } }
+        if req, ok := decide(in); ok { batch = append(batch, req) }     // 3 COLLECT — pure gather
     }
-    ws.rng.Shuffle(len(batch), func(i, j int) { batch[i], batch[j] = batch[j], batch[i] })  // 4 EMIT — seeded shuffle
-    for _, req := range batch { select { case punchCh <- req: default: o.dropPunch(req) } }  // non-blocking
+    ws.sessionRNG.Shuffle(len(batch), func(i, j int) { batch[i], batch[j] = batch[j], batch[i] })  // 4 EMIT — seeded shuffle
+    for _, req := range batch { select { case punchCh <- req: default: /* log + drop */ } }          // non-blocking
 }
 
 (6a) SNAPSHOT — the shared raw read. Loads the bounded window + quote per instrument into memory. Tier 3 produces the raw holder; the interpretive read accessor is Tier 4's (LAYER_2_TIER4_4A_PERCEPTION §4 — Tier 3 does the bulk cache→memory copy, Tier 4's accessor serves per-agent last-N/range over it).
 
 go
-type snapshotView struct { candles map[string][]store.Candle; quote map[string]store.Quote; present map[string]bool }
-func (o *Orchestrator) snapshot(ws *workingSet) *snapshotView {
-    v := &snapshotView{…}
+type snapshotView struct {
+    candles map[string][]store.Candle
+    quote   map[string]store.Quote
+    present map[string]bool   // false when the quote key is absent in Redis
+}
+func (sched *LiveScheduler) snapshot(ctx context.Context, ws *workingSet) *snapshotView {
+    view := &snapshotView{…}
     for _, inst := range ws.instruments {
-        v.candles[inst], _ = o.md.ReadCandles(o.ctx, ws.ex, inst, store.Timeframe1m, o.config.MaxLookbackK)  // bounded K
-        q, ok, _ := o.md.ReadQuote(o.ctx, ws.ex, inst); v.quote[inst] = q; v.present[inst] = ok
+        view.candles[inst], _ = sched.marketData.ReadCandles(ctx, ws.exchangeID, inst, core.TimeframeOneMinute, sched.params.MaxLookbackK)
+        q, ok, _ := sched.marketData.ReadQuote(ctx, ws.exchangeID, inst)
+        view.quote[inst] = q; view.present[inst] = ok
     }
-    return v
+    return view
 }
 
 (6b) The Tier-4 seam — exactly three things.
 
 go
-type DecideInput struct {
-    agent   *workingAgent                            // (1) frozen traits + RuntimeHandle (working memory + 4a gate state)
-    market  *snapshotView                            // (2) shared raw window + quote (read-only this tick); Tier-4 accessor wraps it
-    observe func() (core.AccountObservation, error)  // (3) bound fresh-read = o.core.GetObservation(capital_handle)
+type decideInput struct {
+    agentState *workingAgent                            // (1) frozen traits + memoryHandle (working memory + 4a gate state)
+    market     *snapshotView                            // (2) shared raw window + quote (read-only this tick); Tier-4 accessor wraps it
+    observe    func() (core.AccountObservation, error)  // (3) bound fresh-read = sched.core.GetObservation(capitalHandle)
 }
-func decide(in DecideInput) (core.OrderPunchRequest, bool)   // Tier-4 body — 3a never looks in
+func decide(in decideInput) (core.OrderPunchRequest, bool)   // Tier-4 body — 3a never looks in
 
-Decisions. [decided here] Current price for the tick = quote.LastPrice (D4), gated by HasLast; an instrument with present==false or HasLast==false reads absent this tick (degrade, Point 10). How often decide() calls observe() and its latency is Tier-4's concern — 3a only binds the accessor. The synchronous GetObservation round-trip inside decide() is the one honest hot-path cost; the designated fix is the DECIDE worker-pool (D2 seam) — deferred, prototype runs DECIDE serial, zero agent goroutines. EMIT is select…default non-blocking; a full channel drops rather than blocks (dropPunch = log + metric; fire-and-forget means a dropped punch reconciles as "never sent" on a later GetObservation). The Tier-4 read accessor is not defined here (it's 4a's); snapshotView is the raw structure it reads over.
+Decisions. [decided here] Current price for the tick = quote.LastPrice (D4), gated by HasLast; an instrument with present==false or HasLast==false reads absent this tick (degrade, Point 10). How often decide() calls observe() and its latency is Tier-4's concern — 3a only binds the accessor. The synchronous GetObservation round-trip inside decide() is the one honest hot-path cost; the designated fix is the DECIDE worker-pool (D2 seam) — deferred, prototype runs DECIDE serial, zero agent goroutines. EMIT is select…default non-blocking; a full channel drops rather than blocks (fire-and-forget means a dropped punch reconciles as "never sent" on a later GetObservation). The Tier-4 read accessor is not defined here (it's 4a's); snapshotView is the raw structure it reads over.
 
 Point 7 — The dispatcher goroutine + fire-and-forget punch — D10, D5
 
-What it is. One dispatcher goroutine per exchange, draining the punch channel and calling o.core.PunchOrder, ignoring the 202.
+What it is. One dispatcher goroutine per exchange, draining the punch channel and calling sched.core.PunchOrder, ignoring the 202.
 
 Expected & why. Punch is fire-and-forget (core.PunchOrder → POST /v1/orders → 202 {order_id} ignored; no order ids cached). A reject (409 no_session, 422, 504) is observed after the fact on a later GetObservation. L2 sends tif (D5): Tier-4's executor sets it; the client's validateOrderPunchRequest enforces the pairing (limit ⇒ tif=gtc + price>0; market ⇒ tif=ioc + price==0; never fok) — confirmed in core/order_punch.go.
 
 The implementation.
 
 go
-func (o *Orchestrator) runDispatcher(ex string, punchCh chan core.OrderPunchRequest) {
-    for req := range punchCh {                 // drains until channel closed (Tier-6 teardown)
-        _ = o.core.PunchOrder(o.ctx, req)      // 202 ignored; writes NEVER retried (504 ≠ nothing happened)
+func (sched *LiveScheduler) runDispatcher(ctx context.Context, exchangeID string, punchCh <-chan core.OrderPunchRequest) {
+    for {
+        select {
+        case req, open := <-punchCh:
+            if !open { return }
+            _ = sched.core.PunchOrder(ctx, req)   // 202 ignored; writes NEVER retried (504 ≠ nothing happened)
+        case <-ctx.Done():
+            return
+        }
     }
 }
-// req = core.OrderPunchRequest{AccountID: capital_handle, Instrument, Side, Type, TIF, Qty, LimitPrice} — Tier-4 fills
+// req = core.OrderPunchRequest{AccountID: capitalHandle, Instrument, Side, Type, TIF, Qty, LimitPrice} — Tier-4 fills
 
-Decisions. The dispatcher makes no other Core call; order outcomes are read fresh via GetObservation inside decide(), never correlated here. Precise order-id correlation (A2 fallback) is recorded, not built — switch only if Tier-4 cancels/exits need it.
+Decisions. The dispatcher makes no other Core call; order outcomes are read fresh via GetObservation inside decide(), never correlated here. The select over ctx.Done() ensures the goroutine exits cleanly when the session context is cancelled, rather than blocking on an empty channel. Precise order-id correlation (A2 fallback) is recorded, not built — switch only if Tier-4 cancels/exits need it.
 
 Point 8 — 3b: the PRESENCE phase (lifecycle sweep) — D6, D7, D8
 
@@ -267,79 +299,122 @@ Per the corrected model: Tier 3's curve builder owns the baseline rates (its own
 
 go
 type LifecycleCurveParams struct {   // Tier-3-owned calibration (Point 1g) — baseline rates + ALL shapes
-    StepOutRate, DoneRate, ReentryRate float64   // baseline heights/peaks (overridden by curveEff when present)
-    TauOut, TauDone float64                       // ramp shapes — NEVER scenario-shifted
-    GPSigmaSqOut, GPEllOut, GPSigmaSqDone, GPEllDone float64  // per-curve GP (RBF) shape — never shifted
-    MuBreak, SigmaBreak float64                   // re-entry Gaussian — never shifted
-    QMaxGiveUp, TauGiveUp float64                 // give-up — NOT in curve_eff at all
+    StepOutRate  float64   // plateau height s of the step-out intensity curve (overridden by curveEff.StepOutRate)
+    DoneRate     float64   // peak height D of the done-early intensity curve (overridden by curveEff.DoneRate)
+    ReentryRate  float64   // peak probability p_max of the re-entry Gaussian (overridden by curveEff.ReentryRate)
+
+    StepOutTauRamp float64 // τ_out: how quickly step-out intensity ramps up — NEVER scenario-shifted
+    DoneTauRamp    float64 // τ_done: how sharply done-early rises near close — NEVER scenario-shifted
+
+    StepOutGPVariance    float64 // σ² of the GP riding the step-out curve — never shifted
+    StepOutGPLengthScale float64 // length scale ℓ of the step-out GP — never shifted
+    DoneGPVariance       float64 // σ² of the GP riding the done-early curve — never shifted
+    DoneGPLengthScale    float64 // length scale ℓ of the done-early GP — never shifted
+
+    ReentryMeanBreak  float64   // μ_break: idle seconds at which re-entry probability peaks — never shifted
+    ReentrySigmaBreak float64   // σ_break: spread of the re-entry peak around μ_break — never shifted
+
+    GiveUpMax float64   // q_max: ceiling of the give-up probability — NOT in curve_eff at all
+    GiveUpTau float64   // τ_give_up: idle-duration time-scale of the give-up rise — never shifted
     // (EntryRate/entry-curve params live with 2c's entry stamping, not here)
 }
 type lifecycleCurves struct {
-    lambdaOut  func(tNorm float64) float64   // s·(1−e^{−t/τ_out})·e^{g_out(t)}     (LAYER_2_LIFECYCLE §5)
-    lambdaDone func(tNorm float64) float64   // D·e^{−(1−t)/τ_done}·e^{g_done(t)}   (LAYER_2_LIFECYCLE §7)
-    reentry    func(d float64) float64       // p_max·exp(−(d−μ)²/2σ²)  closed-form (§6) — no realization
-    giveUp     func(d float64) float64       // q_max·(1−e^{−(d−μ)/τ})  closed-form (§7) — no realization
+    stepOutRate func(normalizedTime float64) float64  // s·(1−e^{−t/τ_out})·e^{g_out(t)}     (LAYER_2_LIFECYCLE §5)
+    doneRate    func(normalizedTime float64) float64  // D·e^{−(1−t)/τ_done}·e^{g_done(t)}   (LAYER_2_LIFECYCLE §7)
+    reentryProb func(idleDuration float64) float64    // p_max·exp(−(d−μ)²/2σ²)  closed-form (§6) — no GP realization
+    giveUpProb  func(idleDuration float64) float64    // q_max·(1−e^{−(d−μ)/τ})  closed-form (§7) — no GP realization
 }
-func (o *Orchestrator) buildLifecycleCurves(curveEff *generator.CurveEffective, rng *rand.Rand) *lifecycleCurves {
-    p := o.config.LifecycleCurve                 // baseline (Tier-3-owned)
-    s, D, pMax := p.StepOutRate, p.DoneRate, p.ReentryRate
-    if curveEff != nil { s, D, pMax = curveEff.StepOutRate, curveEff.DoneRate, curveEff.ReentryRate }  // scenario override
-    // realize g_out, g_done GP samples (seeded, this session); bind λ_out, λ_done over {s,D} + fixed shapes;
-    // bind reentry over {pMax, μ_break, σ_break}; bind giveUp over {q_max, τ_giveup} (never shifted).
+// buildLifecycleCurves is a package-level function (not an orchestrator method); the LiveScheduler calls it at startScheduler time.
+func buildLifecycleCurves(curveEff *generator.CurveEffective, params LifecycleCurveParams, rng *rand.Rand) *lifecycleCurves {
+    if curveEff != nil {
+        params.StepOutRate = curveEff.StepOutRate
+        params.DoneRate    = curveEff.DoneRate
+        params.ReentryRate = curveEff.ReentryRate
+    }
+    // Realize g_out and g_done GP samples unconditionally (seeded, this session, same RNG draw order regardless of scenario).
+    // Bind stepOutRate/doneRate over the (possibly-overridden) rate constants + fixed shapes.
+    // Bind reentryProb over {ReentryRate, ReentryMeanBreak, ReentrySigmaBreak}.
+    // Bind giveUpProb over {GiveUpMax, ReentryMeanBreak, GiveUpTau} (never shifted).
 }
 
-[CONFIRMED 2026-10-19] — the rate→constant binding. The four CurveEffective rates map onto the curve constants as: EntryRate→A (entry, consumed by 2c), StepOutRate→s (step-out plateau), DoneRate→D (done height), ReentryRate→p_max (re-entry peak) — confirmed by Ansh. Give-up (q_max/τ_giveup) and all shape params are not in curve_eff, consistent with give-up being the complement mechanism.
+[CONFIRMED 2026-10-19] — the rate→constant binding. The four CurveEffective rates map onto the curve constants as: EntryRate→A (entry, consumed by 2c), StepOutRate→s (step-out plateau), DoneRate→D (done height), ReentryRate→p_max (re-entry peak) — confirmed by Ansh. Give-up (GiveUpMax/GiveUpTau) and all shape params are not in curve_eff, consistent with give-up being the complement mechanism.
 
 8b — Clock 1: entry (checked every sweep) — verbatim
 go
-nowNorm := float64(now.Sub(ws.start)) / float64(ws.end.Sub(ws.start))   // (now−SessionStart)/(SessionEnd−SessionStart)
-if a.presence == store.PresenceDormant && nowNorm >= a.entryTime && o.ceilingHook(len(ws.active)) {  // D8 no-op (=N)
-    a.presence = store.PresenceActive
-    a.nextCheckTime = now.Add(randDur(ws.rng, 20*time.Minute, 40*time.Minute)).Unix()
-    ws.active[id] = a
-    o.rt.SetPresence(o.ctx, ws.ex, id, store.PresenceActive)
-    o.rt.SetTimers(o.ctx, ws.ex, id, a.nextCheckTime, 0)                 // Redis direct (D6)
+nowNorm := normalizedSessionTime(now, ws)   // (now − ws.sessionStart) / (ws.sessionEnd − ws.sessionStart), clamped [0,1]
+for agentID, agentRecord := range ws.agents {
+    if agentRecord.presence != store.PresenceDormant || nowNorm < agentRecord.entryTime { continue }
+    // Ceiling hook: no-op in prototype (ceiling = N, never prevents an activation).
+    agentRecord.presence      = store.PresenceActive
+    agentRecord.nextCheckTime = nowUnix + randCheckInterval(ws.sessionRNG, sched.params.CheckIntervalMin, sched.params.CheckIntervalMax)
+    agentRecord.lastCheckTime = nowUnix   // initialize Δ baseline for first Clock-2 check
+    agentRecord.idleSince     = 0
+    ws.active[agentID] = agentRecord
+    _ = sched.runtime.SetPresence(ctx, ws.exchangeID, agentID, store.PresenceActive)
+    _ = sched.runtime.SetTimers(ctx, ws.exchangeID, agentID, agentRecord.nextCheckTime, agentRecord.idleSince)  // Redis direct (D6)
 }
-8c — Clock 2: recurring rolls (per agent, when next_check_time ≤ now) — verbatim, f_i=1, c_fat=0
+8c — Clock 2: recurring rolls (per agent, when nextCheckTime ≤ now) — verbatim, f_i=1, c_fat=0
 
-Δ = the agent's realized check interval (elapsed since its last check; nominal 20–40 min). Rate→per-check prob uses ·Δ for step-out/done; re-entry/give-up are already per-check (no Δ), per LAYER_2_LIFECYCLE §6–7.
+Δ = the agent's realized check interval in seconds (now.Unix() − agentRecord.lastCheckTime). Rate→per-check probability uses ·Δ for step-out/done; re-entry/give-up are already per-check values (no Δ), per LAYER_2_LIFECYCLE §6–7.
 
 go
 // ACTIVE — roll DONE first (4a), then step-out (#2); done supersedes step-out near close
-if a.presence == store.PresenceActive && now.Unix() >= a.nextCheckTime {
-    pDone := clamp(curves.lambdaDone(nowNorm) * 1 * 1 * Δ, 0, 1)         // λ_done·fatigue·f_i·Δ
-    if ws.rng.Float64() < pDone {
-        a.presence = store.PresenceDone; delete(ws.active, id); o.rt.SetPresence(o.ctx, ws.ex, id, store.PresenceDone)
+for agentID, agentRecord := range ws.active {
+    if nowUnix < agentRecord.nextCheckTime { continue }
+    delta := float64(nowUnix - agentRecord.lastCheckTime)
+    pDone   := clamp01(curves.doneRate(nowNorm) * delta)   // λ_done · f_i=1 · c_fat=0 · Δ
+    pStepOut := clamp01(curves.stepOutRate(nowNorm) * delta) // λ_out · f_i=1 · Δ
+    if ws.sessionRNG.Float64() < pDone {
+        agentRecord.presence = store.PresenceDone
+        delete(ws.active, agentID)
+        _ = sched.runtime.SetPresence(ctx, ws.exchangeID, agentID, store.PresenceDone)
+        // DONE: no re-arm — no future check for a done-for-session agent
+    } else if ws.sessionRNG.Float64() < pStepOut {
+        agentRecord.presence      = store.PresenceIdle
+        agentRecord.idleSince     = nowUnix
+        agentRecord.nextCheckTime = nowUnix + randCheckInterval(ws.sessionRNG, sched.params.CheckIntervalMin, sched.params.CheckIntervalMax)
+        agentRecord.lastCheckTime = nowUnix
+        delete(ws.active, agentID)
+        _ = sched.runtime.SetPresence(ctx, ws.exchangeID, agentID, store.PresenceIdle)
+        _ = sched.runtime.SetTimers(ctx, ws.exchangeID, agentID, agentRecord.nextCheckTime, agentRecord.idleSince)
     } else {
-        pOut := clamp(curves.lambdaOut(nowNorm) * 1 * Δ, 0, 1)           // λ_out·f_i·Δ
-        if ws.rng.Float64() < pOut {
-            a.presence = store.PresenceIdle; a.idleSince = now.Unix(); delete(ws.active, id)
-            o.rt.SetPresence(o.ctx, ws.ex, id, store.PresenceIdle)
-            o.rt.SetTimers(o.ctx, ws.ex, id, a.nextCheckTime, a.idleSince)
-        }
+        // Stay ACTIVE: re-arm for next check interval.
+        agentRecord.nextCheckTime = nowUnix + randCheckInterval(ws.sessionRNG, sched.params.CheckIntervalMin, sched.params.CheckIntervalMax)
+        agentRecord.lastCheckTime = nowUnix
+        _ = sched.runtime.SetTimers(ctx, ws.exchangeID, agentID, agentRecord.nextCheckTime, agentRecord.idleSince)
     }
-    a.nextCheckTime = now.Add(randDur(ws.rng, 20*time.Minute, 40*time.Minute)).Unix()
-    o.rt.SetTimers(o.ctx, ws.ex, id, a.nextCheckTime, a.idleSince)       // Redis direct
 }
+
 // IDLE — roll re-entry first (#3), then give-up (4b) if not returned
-if a.presence == store.PresenceIdle && now.Unix() >= a.nextCheckTime {
-    d := float64(now.Unix() - a.idleSince)                              // idle_duration
-    if ws.rng.Float64() < clamp(curves.reentry(d)*1, 0, 1) {           // r(d)·f_i ; NO Δ
-        a.presence = store.PresenceActive; a.idleSince = 0; ws.active[id] = a
-        a.nextCheckTime = now.Add(randDur(ws.rng, 20*time.Minute, 40*time.Minute)).Unix()
-        o.rt.SetPresence(o.ctx, ws.ex, id, store.PresenceActive); o.rt.SetTimers(o.ctx, ws.ex, id, a.nextCheckTime, 0)
-    } else if ws.rng.Float64() < clamp(curves.giveUp(d)*1, 0, 1) {     // q(d)·f_i ; NO Δ
-        a.presence = store.PresenceDone; o.rt.SetPresence(o.ctx, ws.ex, id, store.PresenceDone)
+for agentID, agentRecord := range ws.agents {
+    if agentRecord.presence != store.PresenceIdle || nowUnix < agentRecord.nextCheckTime { continue }
+    idleDuration := float64(nowUnix - agentRecord.idleSince)
+    pReentry := clamp01(curves.reentryProb(idleDuration))  // r(d) · f_i=1 ; NO Δ
+    pGiveUp  := clamp01(curves.giveUpProb(idleDuration))   // q(d) · f_i=1 ; NO Δ
+    if ws.sessionRNG.Float64() < pReentry {
+        agentRecord.presence      = store.PresenceActive
+        agentRecord.nextCheckTime = nowUnix + randCheckInterval(ws.sessionRNG, sched.params.CheckIntervalMin, sched.params.CheckIntervalMax)
+        agentRecord.lastCheckTime = nowUnix
+        agentRecord.idleSince     = 0
+        ws.active[agentID] = agentRecord
+        _ = sched.runtime.SetPresence(ctx, ws.exchangeID, agentID, store.PresenceActive)
+        _ = sched.runtime.SetTimers(ctx, ws.exchangeID, agentID, agentRecord.nextCheckTime, agentRecord.idleSince)
+    } else if ws.sessionRNG.Float64() < pGiveUp {
+        agentRecord.presence = store.PresenceDone
+        _ = sched.runtime.SetPresence(ctx, ws.exchangeID, agentID, store.PresenceDone)
+        // DONE: no re-arm
     } else {
-        a.nextCheckTime = now.Add(randDur(ws.rng, 20*time.Minute, 40*time.Minute)).Unix()
-        o.rt.SetTimers(o.ctx, ws.ex, id, a.nextCheckTime, a.idleSince)
+        // Stay IDLE: re-arm for next check interval.
+        agentRecord.nextCheckTime = nowUnix + randCheckInterval(ws.sessionRNG, sched.params.CheckIntervalMin, sched.params.CheckIntervalMax)
+        agentRecord.lastCheckTime = nowUnix
+        _ = sched.runtime.SetTimers(ctx, ws.exchangeID, agentID, agentRecord.nextCheckTime, agentRecord.idleSince)
     }
 }
 8d — The write split (D6) + RETIRE
-ACTIVATE / step-out→IDLE / done→DONE / give-up→DONE → in-memory + Redis direct, inline (SetPresence/SetTimers, write-on-change). Positions/P&L never snapshotted.
+ACTIVATE / step-out→IDLE / done→DONE / give-up→DONE → in-memory + Redis direct, inline (SetPresence/SetTimers, write-on-change). Re-arm (SetTimers only, no SetPresence) on stay-ACTIVE and stay-IDLE. DONE agents receive no re-arm. Positions/P&L never snapshotted.
 RETIRE (for-good) is not a per-sweep roll — it is the end-of-session quit roll (#6, LAYER_2_LIFECYCLE §9), fired once at session close. Tier 3 defines the channel + message + drain (Point 9); the roll execution (square-off → quit roll → Retire + Core close) is Tier 6. So in the prototype sweep, nothing sends RETIRE down lifeCh yet.
 
-Decisions. [D7 carried] math verbatim, f_i=1, c_fat=0. [D8 carried] ceilingHook defaults to no-op (=N); X ≤ active ≤ N balancing + blocked-entry PARKED. [decided here] Δ = realized check interval. Mid-session join (#5), P&L-driven DONE, f_i trait factors remain out.
+Decisions. [D7 carried] math verbatim, f_i=1, c_fat=0. [D8 carried] ceiling hook defaults to no-op (=N); X ≤ active ≤ N balancing + blocked-entry PARKED. [decided here] Δ = realized check interval (now.Unix() − lastCheckTime). Mid-session join (#5), P&L-driven DONE, f_i trait factors remain out.
 
 Point 9 — The lifecycle channel + orchestrator drain — D6
 
@@ -348,7 +423,10 @@ What it is. The LifecycleDecision message type + the orchestrator-side drain tha
 The implementation.
 
 go
-type LifecycleDecision struct { AgentID agent.AgentID; Reason string }   // Reason: "retire_for_good" (today the only durable route)
+// session/lifecycle_decision.go
+type LifecycleDecision struct { AgentID agent.AgentID; Reason string }
+const ReasonRetire = "retire_for_good"   // the only Reason the prototype sweep emits (Tier 6 executes it)
+
 func (o *Orchestrator) runLifecycleDrain(lifeCh chan LifecycleDecision) {
     for d := range lifeCh {
         switch d.Reason {
@@ -376,22 +454,22 @@ Only two other goroutines per session: 2c ingest (WS→Redis, Phase 5) and the T
 Within-tick determinism holds; global cross-tick settlement timing is NOT bit-reproducible (async dispatcher). Accepted; strict global repro is a joint L2+Core concern, deferred.
 What Tier-3 impl guarantees
 The forced-delta set is complete against real signatures: D4 quote extension (+ the reader), bounded ReadCandles/ReadQuote, runtime working-memory writers + field constants + RuntimeHandle, D12 orchestrator DI + the two Redis stores built in main.go, and the new config dials.
-startScheduler takes (request, population, curveEff, lifecycleCh); builds the working set (map; not-loaded excluded); realizes step-out + done curves once with Tier-3-owned baseline, overridden by curveEff when a scenario is set; spawns the dispatcher; runs the loop.
-The two-cadence loop runs ACTION on TAction (a floor) and PRESENCE on TPresence, ACTION-before-PRESENCE, sleep-to-next, self-correcting under load — the DECIDE worker-pool seam preserved.
-3a reads the market once per tick (bounded K), iterates the ACTIVE subset, gates decide() by the act-coin, hands shuffled punches to the dispatcher non-blocking; decide() gets the three-part seam; the punch is fire-and-forget with L2-sent tif.
-3b advances presence through the two clocks with verbatim lifecycle math; ACTIVATE/IDLE/DONE write Redis direct; RETIRE plumbing defined, its roll/close execution deferred to Tier 6.
+StartScheduler (Scheduler interface, implemented by LiveScheduler) takes (ctx, request, population, curveEff, lifecycleCh); builds the working set (map; not-loaded excluded); realizes step-out + done curves once with Tier-3-owned baseline rates in LifecycleCurveParams, overridden by curveEff when a scenario is set; spawns the dispatcher; runs the loop.
+The two-cadence loop runs ACTION on TAction (a floor) and PRESENCE on TPresence, ACTION-before-PRESENCE, ctx-aware sleep, self-correcting under load — the DECIDE worker-pool seam preserved.
+3a reads the market once per tick (bounded K), iterates the ACTIVE subset, gates decide() by the act-coin, hands shuffled punches to the dispatcher non-blocking; decide() gets the three-part seam (agentState, market, observe); the punch is fire-and-forget with L2-sent tif.
+3b advances presence through the two clocks with verbatim lifecycle math; ACTIVATE/IDLE/DONE write Redis direct; DONE agents are not re-armed; RETIRE plumbing defined (LifecycleDecision / ReasonRetire), its roll/close execution deferred to Tier 6.
 Degrade-not-abort throughout; teardown is always Tier 6.
 Open / deferred / parked (Tier-3 impl)
 [CONFIRMED 2026-10-19] — the four-rate → curve-constant binding (Point 8a): EntryRate→A(2c), StepOutRate→s, DoneRate→D, ReentryRate→p_max. Locked by Ansh; no longer open.
-Phase-5 coordination (not Tier 3): the 2c ingest mapping must populate the new store.Quote fields; startScheduler's curveEff is supplied by Phase 5's sessions:active read.
+Phase-5 coordination (not Tier 3): the 2c ingest mapping must populate the new store.Quote fields; StartScheduler's curveEff is supplied by Phase 5's sessions:active read.
 Tier-4 internals — decide() body + the read accessor over snapshotView; theta_act/theta_add open; channel→trait map owed. 3a provides the seam only.
 DECIDE worker-pool — the sole change for the heavy-decide() regime; recorded, not built.
 Tier 6 — RETIRE execution, restart rebuild (runtime ReadSnapshot + reconcile), WS reconnect, abort-cleanup, the X-floor, the sessionOver/teardown hook that closes the loop + the punch channel + the lifecycle channel.
-Calibration — TAction, TPresence, MaxLookbackK, PunchBuffer, the baseline rates + all curve shapes in LifecycleCurveParams, the 20–40 min bounds, Δ — all config dials, none fixed.
+Calibration — TAction, TPresence, MaxLookbackK, PunchBuffer, CheckIntervalMin/CheckIntervalMax, the baseline rates + all curve shapes in LifecycleCurveParams — all config dials, none fixed.
 What Tier 3 hands onward
 
-To Tier 4: the DecideInput seam — frozen traits + the RuntimeHandle (working memory + 4a gate state), the shared raw snapshotView + quote, and the bound GetObservation fresh-read. Tier 4 returns a core.OrderPunchRequest (or nothing); everything inside decide() — and the read accessor over snapshotView — is Tier 4.
+To Tier 4: the decideInput seam — frozen traits + the memoryHandle (working memory + 4a gate state), the shared raw snapshotView + quote, and the bound GetObservation fresh-read. Tier 4 returns a core.OrderPunchRequest (or nothing); everything inside decide() — and the read accessor over snapshotView — is Tier 4.
 
 To Tier 6 (named here, executed there): RETIRE execution; the restart rebuild (runtime ReadSnapshot + reconcile); WS reconnect; abort-cleanup; the X-floor; the sessionOver/teardown hook.
 
-End of Tier 3 implementation design. Design source: L2_TIER3_RUNTIME_LOOP_DESIGN (D1–D12). Signatures verified against the shipped simulation-agents repo (core/store/orchestrator/scenario/cmd), 2026-10-19. Boundary contract: L2_TIER0_CORE_API_CONTRACT. Lifecycle math: LAYER_2_LIFECYCLE. Handoff from: Phase 5 (continueBringUp/runAgentPopulation).
+End of Tier 3 implementation design. Design source: L2_TIER3_RUNTIME_LOOP_DESIGN (D1–D12). Signatures verified against the shipped simulation-agents repo (core/store/orchestrator/scenario/cmd), 2026-10-21. Boundary contract: L2_TIER0_CORE_API_CONTRACT. Lifecycle math: LAYER_2_LIFECYCLE. Handoff from: Phase 5 (continueBringUp/runAgentPopulation).
