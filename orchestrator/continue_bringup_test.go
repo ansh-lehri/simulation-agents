@@ -525,7 +525,7 @@ func (fake *recordingRuntimeStore) SetLastCommitTick(_ context.Context, _ string
 func (fake *recordingRuntimeStore) SetLastDecidedReadings(_ context.Context, _ string, _ agent.AgentID, _ string, _ map[string]float64) error {
 	return nil
 }
-func (fake *recordingRuntimeStore) SetPositionContext(_ context.Context, _ string, _ agent.AgentID, _ *store.PositionContext) error {
+func (fake *recordingRuntimeStore) SetPositionContext(_ context.Context, _ string, _ agent.AgentID, _ string, _ *store.PositionContext) error {
 	return nil
 }
 func (fake *recordingRuntimeStore) SetTipFollowState(_ context.Context, _ string, _ agent.AgentID, _ *store.Tracking, _ string, _, _ int64) error {

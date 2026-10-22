@@ -84,7 +84,7 @@ func (nopRuntimeStore) SetLastCommitTick(_ context.Context, _ string, _ agent.Ag
 func (nopRuntimeStore) SetLastDecidedReadings(_ context.Context, _ string, _ agent.AgentID, _ string, _ map[string]float64) error {
 	return nil
 }
-func (nopRuntimeStore) SetPositionContext(_ context.Context, _ string, _ agent.AgentID, _ *store.PositionContext) error {
+func (nopRuntimeStore) SetPositionContext(_ context.Context, _ string, _ agent.AgentID, _ string, _ *store.PositionContext) error {
 	return nil
 }
 func (nopRuntimeStore) SetTipFollowState(_ context.Context, _ string, _ agent.AgentID, _ *store.Tracking, _ string, _, _ int64) error {
