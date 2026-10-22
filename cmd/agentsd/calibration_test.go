@@ -75,3 +75,63 @@ func TestOrchestratorConfigAcceptsRegisteredScenarioNames(t *testing.T) {
 		t.Fatalf("default orchestrator config with registry names rejected: %v", err)
 	}
 }
+
+// TraitChannelSets must no longer carry a "noise" entry — noise reads
+// no perception channel, so there is nothing for the generator to draw
+// a Dirichlet channel_weights vector over. Dropping the entry must not
+// break GenParams.Validate(), which only requires every LISTED trait to
+// have a non-empty channel list, not that every trait be listed.
+func TestDefaultGenParams_TraitChannelSetsHasNoNoiseEntry(t *testing.T) {
+	params := defaultGenParams()
+
+	if _, hasNoise := params.TraitChannelSets["noise"]; hasNoise {
+		t.Error("defaultGenParams: TraitChannelSets must not have a \"noise\" entry")
+	}
+	wantTraits := map[string][]string{
+		"trend":    {"chart", "volume"},
+		"mean_rev": {"range", "volume"},
+	}
+	if len(params.TraitChannelSets) != len(wantTraits) {
+		t.Fatalf("TraitChannelSets: got %d traits, want %d (%v)", len(params.TraitChannelSets), len(wantTraits), params.TraitChannelSets)
+	}
+
+	if err := params.Validate(); err != nil {
+		t.Fatalf("defaultGenParams with noise dropped from TraitChannelSets failed Validate: %v", err)
+	}
+}
+
+// defaultDecisionParams has no caller yet (the flat-agent entry
+// decision that consumes it lands in a later stage), so this test is
+// what keeps it exercised rather than flagged as dead composition-root
+// code. It also pins the basic sanity every shave/mixer constant must
+// satisfy regardless of the exact placeholder magnitude: floors sit in
+// (0,1] (a shave can shrink conviction hard but never force it to
+// exactly zero on its own), and the two threshold-shaped dials are
+// strictly positive.
+func TestDefaultDecisionParams_FieldsAreSane(t *testing.T) {
+	params := defaultDecisionParams()
+
+	floors := map[string]float64{
+		"TimeShave.Floor":     params.TimeShave.Floor,
+		"SpreadShave.Floor":   params.SpreadShave.Floor,
+		"CooldownShave.Floor": params.CooldownShave.Floor,
+	}
+	for name, floor := range floors {
+		if floor <= 0 || floor > 1 {
+			t.Errorf("%s: got %v, want in (0,1]", name, floor)
+		}
+	}
+
+	if params.Mixer.SecondarySensitivity <= 0 {
+		t.Errorf("Mixer.SecondarySensitivity: got %v, want > 0", params.Mixer.SecondarySensitivity)
+	}
+	if params.Mixer.NoiseImpulseConviction <= 0 || params.Mixer.NoiseImpulseConviction > 1 {
+		t.Errorf("Mixer.NoiseImpulseConviction: got %v, want in (0,1]", params.Mixer.NoiseImpulseConviction)
+	}
+	if params.Gate.WaitReassessThreshold <= 0 {
+		t.Errorf("Gate.WaitReassessThreshold: got %v, want > 0", params.Gate.WaitReassessThreshold)
+	}
+	if params.ThetaAddMargin < 0 {
+		t.Errorf("ThetaAddMargin: got %v, want >= 0", params.ThetaAddMargin)
+	}
+}
