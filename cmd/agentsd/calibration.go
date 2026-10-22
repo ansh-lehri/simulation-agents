@@ -139,10 +139,11 @@ func defaultGenParams() generator.GenParams {
 }
 
 // defaultDecisionParams returns the current placeholder calibration for
-// the flat-agent entry decision (the mixer, the re-decide gate, and the
-// commit-gate shaves). As with defaultGenParams, these numbers are not
-// fitted to any measurement — they are starting points a calibration
-// pass replaces; the decision package only depends on the shape of
+// the flat-agent entry decision (the mixer, the re-decide gate, the
+// commit-gate shaves, and the shared order-execution sizing/pricing/
+// noise dials). As with defaultGenParams, these numbers are not fitted
+// to any measurement — they are starting points a calibration pass
+// replaces; the decision package only depends on the shape of
 // decision.Params, never on these specific values.
 func defaultDecisionParams() decision.Params {
 	return decision.Params{
@@ -177,6 +178,12 @@ func defaultDecisionParams() decision.Params {
 			Floor: 0.4,
 		},
 		ThetaAddMargin: 0.1,
+
+		MaxFrac:     0.2,
+		Gamma:       0.5,
+		ThetaMarket: 0.7,
+		KPlace:      0.5,
+		SigmaExec:   0.15,
 	}
 }
 

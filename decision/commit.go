@@ -25,6 +25,14 @@ type ExecIntentAction string
 // a brand-new position request for an instrument the agent is flat in.
 const ExecIntentActionOpen ExecIntentAction = "open"
 
+// ExecIntentActionClose marks a full-exit request for an instrument the
+// agent is currently holding. Produced by the (not yet built) position-
+// exit stage, never by this package; the executor dispatches on it
+// explicitly because closing is the one case that cannot be derived
+// from the position alone (an "add" intent reuses the same sizing
+// formula as "open" and is never compared against by value).
+const ExecIntentActionClose ExecIntentAction = "close"
+
 // ExecIntent is the signed trading intent handed onward to the stage
 // that resolves one candidate per instrument into an actual order.
 // Direction and Conviction are the only fields a downstream sizing
@@ -74,6 +82,34 @@ type Params struct {
 	// is first introduced, but nothing in this package reads it yet;
 	// the add-position stage is the consumer.
 	ThetaAddMargin float64
+
+	// MaxFrac is the largest fraction of an agent's free capital a
+	// single full-conviction entry is allowed to deploy. Consumed by
+	// the executor's order-sizing formula.
+	MaxFrac float64
+
+	// Gamma controls how strongly conviction can warp an agent's base
+	// aggressiveness toward taking the market (never toward patience).
+	// Consumed by the executor's market-vs-limit decision.
+	Gamma float64
+
+	// ThetaMarket is the global cutoff an agent's (conviction-warped)
+	// aggressiveness is compared against to choose a market order over
+	// a resting limit order. Deliberately global, not per-agent — the
+	// per-agent variation already comes through aggressiveness itself.
+	ThetaMarket float64
+
+	// KPlace scales how far into the spread an aggressive agent is
+	// willing to place a resting limit order, toward the opposite
+	// touch. Consumed by the executor's limit-price placement.
+	KPlace float64
+
+	// SigmaExec is the global execution-noise width applied to an
+	// agent's sized quantity and placed price. A single global
+	// constant, not per-agent — per-agent variation already lives in
+	// the agent's skill trait, which scales this width down to zero as
+	// skill approaches 1.
+	SigmaExec float64
 }
 
 // MixerParams calibrates how the mixer turns per-trait verdicts and
