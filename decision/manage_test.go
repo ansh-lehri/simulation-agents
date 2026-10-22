@@ -1,12 +1,21 @@
 package decision
 
 import (
+	"math/rand/v2"
 	"testing"
+
+	"pgregory.net/rapid"
 
 	"simulation-agents/agent"
 	"simulation-agents/core"
 	"simulation-agents/store"
 )
+
+// newManageRNG builds the same seeded stream shape every other test
+// file in this package uses, so a fixed seed replays byte-identically.
+func newManageRNG(seed uint64) *rand.Rand {
+	return rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15))
+}
 
 // testExitProfile builds a minimal agent.ExitProfile for the exit-check
 // tests — only the fields the subject under test actually reads.
@@ -430,3 +439,175 @@ func TestCheckExit_LevelFailureIsAbruptExit(t *testing.T) {
 }
 
 func intPtr(value int) *int { return &value }
+
+// testAddTraits builds the minimal TraitVector checkAdd reads: a
+// Disposition (mix's tie-break weights) and ThetaAct (the entry bar
+// θ_add is derived from).
+func testAddTraits(trend, meanRev, noise, thetaAct float64) agent.TraitVector {
+	return agent.TraitVector{
+		Disposition: &agent.Disposition{Trend: trend, MeanRev: meanRev, Noise: noise},
+		ThetaAct:    &thetaAct,
+	}
+}
+
+// A single trend verdict (chart direction up, non-trivial strength)
+// is enough for mix to form an opinion; checkAdd fires only when that
+// opinion agrees with the position's own direction, the position is
+// in profit, and conviction clears θ_add = ThetaAct + ThetaAddMargin.
+// Each of the three conditions failing independently is a hold, never
+// a partial add.
+func TestCheckAdd(t *testing.T) {
+	upBundle := &PerceptionBundle{Chart: &ChartReading{ReadOK: true, Direction: DirUp, Strength: 0.9}}
+	downBundle := &PerceptionBundle{Chart: &ChartReading{ReadOK: true, Direction: DirDown, Strength: 0.9}}
+	weakUpBundle := &PerceptionBundle{Chart: &ChartReading{ReadOK: true, Direction: DirUp, Strength: 0.3}}
+
+	baseInput := ManageInput{
+		Bundle: upBundle,
+		Traits: testAddTraits(1, 0, 0, 0.5),
+		Roles:  TraitChannelRoles,
+		RNG:    newManageRNG(1),
+		Params: Params{ThetaAddMargin: 0.1},
+	}
+
+	t.Run("all conditions true -> add with the opinion's conviction", func(t *testing.T) {
+		intent, add := checkAdd(baseInput, 1, 10)
+		if !add || intent.Action != ExecIntentActionAdd || intent.Direction != 1 {
+			t.Fatalf("want add/long, got (add=%v, intent=%+v)", add, intent)
+		}
+		if intent.Conviction != 0.9 {
+			t.Errorf("Conviction = %v, want 0.9", intent.Conviction)
+		}
+	})
+
+	t.Run("opposite mix direction -> hold", func(t *testing.T) {
+		input := baseInput
+		input.Bundle = downBundle
+		if _, add := checkAdd(input, 1, 10); add {
+			t.Error("want hold when the mixer's opinion opposes the position's own direction")
+		}
+	})
+
+	t.Run("losing position -> hold", func(t *testing.T) {
+		if _, add := checkAdd(baseInput, 1, -10); add {
+			t.Error("want hold when the position is not in profit")
+		}
+	})
+
+	t.Run("conviction below theta_add -> hold", func(t *testing.T) {
+		input := baseInput
+		input.Bundle = weakUpBundle // conviction 0.3 < theta_add 0.6
+		if _, add := checkAdd(input, 1, 10); add {
+			t.Error("want hold when conviction does not clear theta_add")
+		}
+	})
+
+	t.Run("no verdicts at all -> hold", func(t *testing.T) {
+		input := baseInput
+		input.Bundle = &PerceptionBundle{}
+		if _, add := checkAdd(input, 1, 10); add {
+			t.Error("want hold when the mixer has no opinion to act on")
+		}
+	})
+}
+
+// The add-check never rolls the noise-coin bypass: it calls
+// interpret+mix directly, and mix() itself never reads
+// Disposition.Noise (only noiseImpulse, a function checkAdd never
+// calls, does). Varying Noise across its full range with everything
+// else — including the RNG seed — held fixed must never change the
+// outcome.
+func TestCheckAdd_NeverRollsNoiseCoin(t *testing.T) {
+	bundle := &PerceptionBundle{Chart: &ChartReading{ReadOK: true, Direction: DirUp, Strength: 0.9}}
+
+	var results []ExecIntent
+	var adds []bool
+	for _, noise := range []float64{0, 0.25, 0.5, 0.75, 1} {
+		input := ManageInput{
+			Bundle: bundle,
+			Traits: testAddTraits(1, 0, noise, 0.5),
+			Roles:  TraitChannelRoles,
+			RNG:    newManageRNG(1),
+			Params: Params{ThetaAddMargin: 0.1},
+		}
+		intent, add := checkAdd(input, 1, 10)
+		results = append(results, intent)
+		adds = append(adds, add)
+	}
+
+	for i := 1; i < len(results); i++ {
+		if results[i] != results[0] || adds[i] != adds[0] {
+			t.Fatalf("Noise=%v changed the outcome: got (add=%v, intent=%+v), want (add=%v, intent=%+v)",
+				[]float64{0, 0.25, 0.5, 0.75, 1}[i], adds[i], results[i], adds[0], results[0])
+		}
+	}
+}
+
+// theta_add's derivation property: for any ThetaAct in [0,1] and any
+// Margin >= 0, theta_add = ThetaAct + Margin is always >= ThetaAct —
+// the add bar can never be laxer than the entry bar.
+func TestThetaAddDerivation(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		thetaAct := rapid.Float64Range(0, 1).Draw(rt, "theta_act")
+		margin := rapid.Float64Range(0, 10).Draw(rt, "margin")
+
+		thetaAdd := thetaAct + margin
+		if thetaAdd < thetaAct {
+			rt.Fatalf("theta_add = %v < theta_act = %v (margin = %v)", thetaAdd, thetaAct, margin)
+		}
+	})
+}
+
+// Manage end-to-end: when no exit trigger fires but the add-check's
+// conditions all hold, Manage returns the add intent produced by
+// checkAdd, not just a bare "something happened."
+func TestManage_AddsWhenNoExitAndAddConditionsHold(t *testing.T) {
+	input := ManageInput{
+		Position: core.Position{Qty: 10, WeightedAvgEntry: 100, ReservedQty: 0},
+		Bundle:   &PerceptionBundle{Chart: &ChartReading{ReadOK: true, Direction: DirUp, Strength: 0.9}},
+		Traits: agent.TraitVector{
+			Exit:        testExitProfile(exitModeDistance, 0.5, 0.5, 0, 0), // wide enough that 110 doesn't trip stop/target
+			MaxHold:     intPtr(1000),
+			Disposition: &agent.Disposition{Trend: 1, MeanRev: 0, Noise: 0},
+			ThetaAct:    floatPtr(0.5),
+		},
+		CurrentPrice: 110, // in profit, inside the wide stop/target band
+		Tick:         TickContext{TickIndex: 50},
+		Roles:        TraitChannelRoles,
+		RNG:          newManageRNG(1),
+		Params:       Params{ThetaAddMargin: 0.1},
+	}
+
+	intent, ok := Manage(input)
+	if !ok || intent.Action != ExecIntentActionAdd || intent.Direction != 1 {
+		t.Fatalf("want add/long, got (ok=%v, intent=%+v)", ok, intent)
+	}
+}
+
+// Manage is pure and seeded: identical inputs (including a
+// freshly-constructed RNG from the same seed) must produce
+// byte-identical output on repeat calls.
+func TestManage_Determinism(t *testing.T) {
+	buildInput := func() ManageInput {
+		return ManageInput{
+			Position: core.Position{Qty: 10, WeightedAvgEntry: 100, ReservedQty: 0},
+			Bundle:   &PerceptionBundle{Chart: &ChartReading{ReadOK: true, Direction: DirUp, Strength: 0.9}},
+			Traits: agent.TraitVector{
+				Exit:        testExitProfile(exitModeDistance, 0.5, 0.5, 0, 0),
+				MaxHold:     intPtr(1000),
+				Disposition: &agent.Disposition{Trend: 1, MeanRev: 0, Noise: 0},
+				ThetaAct:    floatPtr(0.5),
+			},
+			CurrentPrice: 110,
+			Tick:         TickContext{TickIndex: 50},
+			Roles:        TraitChannelRoles,
+			RNG:          newManageRNG(7),
+			Params:       Params{ThetaAddMargin: 0.1},
+		}
+	}
+
+	first, firstOK := Manage(buildInput())
+	second, secondOK := Manage(buildInput())
+	if first != second || firstOK != secondOK {
+		t.Fatalf("Manage not deterministic: first=(%+v, %v), second=(%+v, %v)", first, firstOK, second, secondOK)
+	}
+}

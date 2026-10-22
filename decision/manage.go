@@ -85,8 +85,8 @@ func Manage(input ManageInput) (ExecIntent, bool) {
 	if input.Position.Qty == 0 {
 		return ExecIntent{}, false
 	}
-	if input.Traits.Exit == nil || input.Traits.MaxHold == nil {
-		panic("decision: Manage called on a TraitVector missing exit_profile/max_hold — these are generated once at mint for every endogenous agent and must never be absent while holding a position")
+	if input.Traits.Exit == nil || input.Traits.MaxHold == nil || input.Traits.ThetaAct == nil || input.Traits.Disposition == nil {
+		panic("decision: Manage called on a TraitVector missing exit_profile/max_hold/theta_act/disposition — these are generated once at mint for every endogenous agent and must never be absent while holding a position")
 	}
 
 	entryDirection := directionOf(float64(input.Position.Qty))
@@ -96,9 +96,56 @@ func Manage(input ManageInput) (ExecIntent, bool) {
 		return closeIntent, true
 	}
 
-	// The add-check lands in the next stage of this build; it will use
-	// unrealizedPnL (below) against this position to decide add/hold.
+	unrealized := unrealizedPnL(input.CurrentPrice, input.Position.WeightedAvgEntry, input.Position.Qty)
+	if addIntent, add := checkAdd(input, entryDirection, unrealized); add {
+		return addIntent, true
+	}
+
 	return ExecIntent{}, false
+}
+
+// ExecIntentActionAdd marks a scale-into-the-position request for an
+// instrument the agent already holds and is winning on. Produced only
+// by this package's add-check below — never by 4b's commit (open
+// only) or 4c (which never originates an intent, only sizes one it is
+// handed).
+const ExecIntentActionAdd ExecIntentAction = "add"
+
+// checkAdd decides whether to add to an already-winning position this
+// tick. It reuses 4b's own interpret+mix on this tick's bundle —
+// shared mechanism, not a duplicate — rather than running a second
+// opinion-forming pass. An add never rolls the noise-coin bypass: it
+// calls interpret+mix directly, the same signal-only path 4b's mixer
+// exposes once the noise coin has already missed, since the noise
+// coin is an entry-liveness impulse, not a reason to pyramid an
+// already-live position.
+//
+// ADD fires only when ALL of: the mixer's opinion agrees with the
+// position's own direction (an add never reverses), the position is
+// currently in profit (add to winners, not losers), and the opinion's
+// conviction clears θ_add — a deliberately higher bar than the entry
+// bar θ_act, by cfg.Params.ThetaAddMargin. Any one condition failing
+// is a hold, not a partial action.
+func checkAdd(input ManageInput, entryDirection float64, unrealized int64) (ExecIntent, bool) {
+	bundle := PerceptionBundle{}
+	if input.Bundle != nil {
+		bundle = *input.Bundle
+	}
+	verdicts := interpret(bundle, input.Traits, input.Roles, input.Params.Interpretation)
+	opinion := mix(verdicts, *input.Traits.Disposition, input.RNG, input.Params.Mixer)
+	if opinion == nil {
+		return ExecIntent{}, false
+	}
+
+	thetaAdd := *input.Traits.ThetaAct + input.Params.ThetaAddMargin
+	sameDirection := opinion.Direction == entryDirection
+	inProfit := unrealized > 0
+	convictionClearsBar := opinion.Conviction >= thetaAdd
+
+	if !sameDirection || !inProfit || !convictionClearsBar {
+		return ExecIntent{}, false
+	}
+	return ExecIntent{Action: ExecIntentActionAdd, Direction: entryDirection, Conviction: opinion.Conviction}, true
 }
 
 // checkExit evaluates this tick's exit condition. A level-mode agent
