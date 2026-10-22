@@ -391,11 +391,11 @@ func TestSetPositionContext_NonNilRoundTrip(t *testing.T) {
 		EntryChannel: "technical",
 		EntryTick:    1_700_000_100,
 	}
-	if err := runtimeStore.SetPositionContext(ctx, "ex-1", "a-1", posCtx); err != nil {
+	if err := runtimeStore.SetPositionContext(ctx, "ex-1", "a-1", "NIFTY", posCtx); err != nil {
 		t.Fatalf("SetPositionContext: %v", err)
 	}
 
-	raw, err := client.HGet(ctx, store.RuntimeKey("ex-1", "a-1"), store.FieldPositionContext).Result()
+	raw, err := client.HGet(ctx, store.RuntimeKey("ex-1", "a-1"), store.PositionContextField("NIFTY")).Result()
 	if err != nil {
 		t.Fatalf("HGet position_context: %v", err)
 	}
@@ -415,16 +415,58 @@ func TestSetPositionContext_NilClearsField(t *testing.T) {
 	ctx := context.Background()
 	runtimeStore := store.NewRedisRuntimeStore(client)
 
-	if err := runtimeStore.SetPositionContext(ctx, "ex-1", "a-1", nil); err != nil {
+	if err := runtimeStore.SetPositionContext(ctx, "ex-1", "a-1", "NIFTY", nil); err != nil {
 		t.Fatalf("SetPositionContext nil: %v", err)
 	}
 
-	got, err := client.HGet(ctx, store.RuntimeKey("ex-1", "a-1"), store.FieldPositionContext).Result()
+	got, err := client.HGet(ctx, store.RuntimeKey("ex-1", "a-1"), store.PositionContextField("NIFTY")).Result()
 	if err != nil {
 		t.Fatalf("HGet position_context: %v", err)
 	}
 	if got != "" {
 		t.Errorf("nil position_context: expected empty string, got %q", got)
+	}
+}
+
+// An agent holding two instruments carries one independent entry
+// record per instrument — writing one must never overwrite the other.
+func TestSetPositionContext_TwoInstrumentsIsolated(t *testing.T) {
+	client := openTestRedis(t)
+	ctx := context.Background()
+	runtimeStore := store.NewRedisRuntimeStore(client)
+
+	niftyCtx := &store.PositionContext{EntryDir: "LONG", EntryChannel: "chart", EntryTick: 10}
+	goldCtx := &store.PositionContext{EntryDir: "SHORT", EntryChannel: "range", EntryTick: 20}
+	if err := runtimeStore.SetPositionContext(ctx, "ex-1", "a-1", "NIFTY", niftyCtx); err != nil {
+		t.Fatalf("SetPositionContext NIFTY: %v", err)
+	}
+	if err := runtimeStore.SetPositionContext(ctx, "ex-1", "a-1", "GOLD", goldCtx); err != nil {
+		t.Fatalf("SetPositionContext GOLD: %v", err)
+	}
+
+	key := store.RuntimeKey("ex-1", "a-1")
+	niftyRaw, err := client.HGet(ctx, key, store.PositionContextField("NIFTY")).Result()
+	if err != nil {
+		t.Fatalf("HGet position_context:NIFTY: %v", err)
+	}
+	var niftyDecoded store.PositionContext
+	if err := json.Unmarshal([]byte(niftyRaw), &niftyDecoded); err != nil {
+		t.Fatalf("unmarshal position_context:NIFTY: %v", err)
+	}
+	if niftyDecoded != *niftyCtx {
+		t.Errorf("NIFTY position_context: got %+v want %+v", niftyDecoded, *niftyCtx)
+	}
+
+	goldRaw, err := client.HGet(ctx, key, store.PositionContextField("GOLD")).Result()
+	if err != nil {
+		t.Fatalf("HGet position_context:GOLD: %v", err)
+	}
+	var goldDecoded store.PositionContext
+	if err := json.Unmarshal([]byte(goldRaw), &goldDecoded); err != nil {
+		t.Fatalf("unmarshal position_context:GOLD: %v", err)
+	}
+	if goldDecoded != *goldCtx {
+		t.Errorf("GOLD position_context: got %+v want %+v", goldDecoded, *goldCtx)
 	}
 }
 
