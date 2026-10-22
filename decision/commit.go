@@ -1,5 +1,11 @@
 package decision
 
+import (
+	"math"
+
+	"simulation-agents/agent"
+)
+
 // NoPriorCommit is the lastCommitTick sentinel meaning "this agent has
 // never committed an order for this instrument." Tick indices are
 // zero-based and strictly increasing, so a negative sentinel can never
@@ -160,4 +166,178 @@ type CooldownShaveParams struct {
 	Damp  float64 // depth of the cooldown dip immediately after a commit
 	Tau   float64 // how many ticks it takes the dip to decay away
 	Floor float64 // the multiplier never shaves below this, however recent the last commit
+}
+
+// commitOutcome is what commit decides to do with one agent's mixer
+// opinion on one instrument this tick.
+type commitOutcome int8
+
+const (
+	commitSkip commitOutcome = iota
+	commitWait
+	commitCommit
+)
+
+// commitResult is commit's full answer: the outcome, the signed intent
+// to act on (meaningful only when Outcome is commitCommit), and the
+// PendingWatch the caller should carry forward into this agent's
+// working memory for this instrument. PendingWatch is nil on
+// commitSkip and commitCommit (nothing left to watch — either the view
+// didn't clear the bar at all, or it already acted on it) and non-nil
+// on commitWait (the in-progress confirmation count).
+type commitResult struct {
+	Outcome             commitOutcome
+	Direction           float64
+	EffectiveConviction float64
+	PendingWatch        *PendingWatch
+}
+
+// commit turns one agent's mixer opinion on one instrument into
+// COMMIT / WAIT / SKIP. opinion is taken by value, not by pointer, and
+// carries only Direction and Conviction — there is no mixer-internal
+// state on the type for this function to read even if it wanted to;
+// conviction already bakes in however much the traits agreed or
+// disagreed with each other (Option C), so commit never re-derives
+// that agreement.
+//
+// Every input here is this one agent's own: its own ThetaAct/
+// NeedsConfirm/ConfirmsNeeded traits, its own liquidity reading, its
+// own lastCommitTick and pendingWatch working memory. Two agents
+// sharing the identical opinion and the identical market conditions
+// this tick can still land on different outcomes, because their
+// traits and carried state differ.
+//
+// theta_act, needs_confirm, and confirms_needed are generated once at
+// mint for every endogenous agent (never drawn, defaulted, or
+// re-derived here) — an endogenous agent reaching this function
+// without them is a broken upstream invariant, not a recoverable case,
+// so this panics rather than silently synthesizing a value.
+func commit(
+	opinion mixOpinion,
+	traits agent.TraitVector,
+	currentTick int64,
+	sessionProgress float64,
+	liquidity *LiquidityReading,
+	lastCommitTick int64,
+	pendingWatch *PendingWatch,
+	params Params,
+) commitResult {
+	if traits.ThetaAct == nil || traits.NeedsConfirm == nil || traits.ConfirmsNeeded == nil {
+		panic("decision: commit called on a TraitVector missing theta_act/needs_confirm/confirms_needed — these are generated once at mint for every endogenous agent and must never be absent here")
+	}
+
+	// Step 0 — shave: each condition multiplier can shrink conviction
+	// hard but never past its own floor, so a genuinely strong view
+	// survives a rough environment rather than being force-zeroed by
+	// one bad condition alone.
+	timeMult := timeShaveMultiplier(sessionProgress, params.TimeShave)
+	spreadMult := spreadShaveMultiplier(traits.Diet, liquidity, params.SpreadShave)
+	cooldownMult := cooldownShaveMultiplier(currentTick, lastCommitTick, params.CooldownShave)
+	effectiveConviction := opinion.Conviction * timeMult * spreadMult * cooldownMult
+
+	// Step 1 — floor: below this agent's own commit bar, nothing below
+	// survives regardless of how it got there, and any in-progress
+	// watch is abandoned rather than carried forward on a view that no
+	// longer clears the bar.
+	if effectiveConviction < *traits.ThetaAct {
+		return commitResult{Outcome: commitSkip}
+	}
+
+	// Step 2 — immediate actors commit on the spot.
+	if !*traits.NeedsConfirm {
+		return commitResult{
+			Outcome:             commitCommit,
+			Direction:           opinion.Direction,
+			EffectiveConviction: effectiveConviction,
+		}
+	}
+
+	// Step 2, waiter branch — accumulate confirmations toward
+	// confirms_needed. A same-direction re-decide advances the count
+	// without resetting how long the watch has been open; an
+	// opposite-direction re-decide means the view changed mid-watch, so
+	// the count restarts rather than continuing to track a view this
+	// agent no longer holds.
+	switch {
+	case pendingWatch == nil:
+		return commitResult{
+			Outcome:      commitWait,
+			PendingWatch: &PendingWatch{Direction: opinion.Direction, ConfirmsSeen: 1, SinceTick: currentTick},
+		}
+	case pendingWatch.Direction == opinion.Direction:
+		confirmsSeen := pendingWatch.ConfirmsSeen + 1
+		if confirmsSeen >= *traits.ConfirmsNeeded {
+			return commitResult{
+				Outcome:             commitCommit,
+				Direction:           opinion.Direction,
+				EffectiveConviction: effectiveConviction,
+			}
+		}
+		return commitResult{
+			Outcome:      commitWait,
+			PendingWatch: &PendingWatch{Direction: opinion.Direction, ConfirmsSeen: confirmsSeen, SinceTick: pendingWatch.SinceTick},
+		}
+	default:
+		return commitResult{
+			Outcome:      commitWait,
+			PendingWatch: &PendingWatch{Direction: opinion.Direction, ConfirmsSeen: 1, SinceTick: currentTick},
+		}
+	}
+}
+
+// clampFloor clamps value to [floor, 1] — the shape every commit shave
+// multiplier shares: a condition can shrink conviction hard, but never
+// below the floor calibration sets, and never above 1 (a shave only
+// ever shrinks, it never amplifies).
+func clampFloor(value, floor float64) float64 {
+	return math.Max(floor, math.Min(1, value))
+}
+
+// timeShaveMultiplier is the session-time U-shape: an agent is more
+// cautious both right after the open and right before the close,
+// trusting its own signal most through the middle of the session.
+// sessionProgress is already clamped to [0,1] by the time it gets
+// here (4a's accessor guarantees that), so no further clamping is
+// needed on the input itself.
+func timeShaveMultiplier(sessionProgress float64, params TimeShaveParams) float64 {
+	openDip := params.OpenDamp * math.Pow(1-sessionProgress, params.OpenRampExponent)
+	closeDip := params.CloseDamp * math.Pow(sessionProgress, params.CloseRampExponent)
+	return clampFloor(1-openDip-closeDip, params.Floor)
+}
+
+// spreadShaveMultiplier shaves conviction for a wide spread relative
+// to this instrument's normal baseline — but only for an agent whose
+// diet actually includes the order-book channel; an agent that never
+// perceives the book has no honest signal to shave on, and neither
+// does an agent whose book reading happened to be unreadable this
+// tick, so both cases fall back to no shave at all rather than
+// penalizing a channel the agent isn't using.
+func spreadShaveMultiplier(diet *agent.Diet, liquidity *LiquidityReading, params SpreadShaveParams) float64 {
+	if diet == nil || !diet.OrderBook {
+		return 1
+	}
+	if liquidity == nil || !liquidity.ReadOK {
+		return 1
+	}
+	if params.NormalSpread <= 0 {
+		return 1
+	}
+	return clampFloor(1-params.SpreadSensitivity*(liquidity.Spread/params.NormalSpread), params.Floor)
+}
+
+// cooldownShaveMultiplier shaves conviction for how recently this
+// agent last committed on this instrument — a back-to-back commit is
+// less convincing than one with room to breathe since the last. An
+// agent that has never committed before has nothing to cool down from,
+// so it gets no shave at all, never a false one from comparing against
+// a sentinel tick as if it were a real one.
+func cooldownShaveMultiplier(currentTick, lastCommitTick int64, params CooldownShaveParams) float64 {
+	if lastCommitTick == NoPriorCommit {
+		return 1
+	}
+	if params.Tau <= 0 {
+		return 1
+	}
+	ticksSinceLastCommit := float64(currentTick - lastCommitTick)
+	return clampFloor(1-params.Damp*math.Exp(-ticksSinceLastCommit/params.Tau), params.Floor)
 }
