@@ -69,10 +69,19 @@ func (nopRuntimeStore) SetTipper(ctx context.Context, exchangeID string, agentID
 	_, _, _ = ctx, exchangeID, agentID
 	return nil
 }
-func (nopRuntimeStore) SetStandingOpinion(_ context.Context, _ string, _ agent.AgentID, _ float64, _ string) error {
+func (nopRuntimeStore) SetStandingOpinion(_ context.Context, _ string, _ agent.AgentID, _ string, _ float64, _ string) error {
 	return nil
 }
-func (nopRuntimeStore) SetWaitStreak(_ context.Context, _ string, _ agent.AgentID, _ int) error {
+func (nopRuntimeStore) SetWaitStreak(_ context.Context, _ string, _ agent.AgentID, _ string, _ int) error {
+	return nil
+}
+func (nopRuntimeStore) SetPendingWatch(_ context.Context, _ string, _ agent.AgentID, _ string, _ *store.PendingWatch) error {
+	return nil
+}
+func (nopRuntimeStore) SetLastCommitTick(_ context.Context, _ string, _ agent.AgentID, _ string, _ int64) error {
+	return nil
+}
+func (nopRuntimeStore) SetLastDecidedReadings(_ context.Context, _ string, _ agent.AgentID, _ string, _ map[string]float64) error {
 	return nil
 }
 func (nopRuntimeStore) SetPositionContext(_ context.Context, _ string, _ agent.AgentID, _ *store.PositionContext) error {

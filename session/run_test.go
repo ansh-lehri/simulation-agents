@@ -47,9 +47,9 @@ func TestNewRunnerRejectsNilDependencies(t *testing.T) {
 	}
 
 	testCases := []struct {
-		fieldName       string
-		mutate          func(*Dependencies)
-		errorSubstring  string
+		fieldName      string
+		mutate         func(*Dependencies)
+		errorSubstring string
 	}{
 		{"Core", func(deps *Dependencies) { deps.Core = nil }, "Core"},
 		{"Runtime", func(deps *Dependencies) { deps.Runtime = nil }, "Runtime"},
@@ -170,10 +170,19 @@ func (stubRuntimeStore) MarkSessionLoadFailed(ctx context.Context, exchangeID st
 	return nil
 }
 
-func (stubRuntimeStore) SetStandingOpinion(_ context.Context, _ string, _ agent.AgentID, _ float64, _ string) error {
+func (stubRuntimeStore) SetStandingOpinion(_ context.Context, _ string, _ agent.AgentID, _ string, _ float64, _ string) error {
 	return nil
 }
-func (stubRuntimeStore) SetWaitStreak(_ context.Context, _ string, _ agent.AgentID, _ int) error {
+func (stubRuntimeStore) SetWaitStreak(_ context.Context, _ string, _ agent.AgentID, _ string, _ int) error {
+	return nil
+}
+func (stubRuntimeStore) SetPendingWatch(_ context.Context, _ string, _ agent.AgentID, _ string, _ *store.PendingWatch) error {
+	return nil
+}
+func (stubRuntimeStore) SetLastCommitTick(_ context.Context, _ string, _ agent.AgentID, _ string, _ int64) error {
+	return nil
+}
+func (stubRuntimeStore) SetLastDecidedReadings(_ context.Context, _ string, _ agent.AgentID, _ string, _ map[string]float64) error {
 	return nil
 }
 func (stubRuntimeStore) SetPositionContext(_ context.Context, _ string, _ agent.AgentID, _ *store.PositionContext) error {

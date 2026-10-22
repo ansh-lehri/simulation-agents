@@ -171,50 +171,211 @@ func TestRuntimeStore_KeysAreNamespaced(t *testing.T) {
 }
 
 // SetStandingOpinion writes both the opinion (as a shortest-round-trip
-// float string) and the stance to their dedicated hash fields.
+// float string) and the stance to their dedicated per-instrument hash
+// fields.
 func TestSetStandingOpinion_RoundTrip(t *testing.T) {
 	client := openTestRedis(t)
 	ctx := context.Background()
 	runtimeStore := store.NewRedisRuntimeStore(client)
 
-	if err := runtimeStore.SetStandingOpinion(ctx, "ex-1", "a-1", 0.75, "TREND_LONG"); err != nil {
+	if err := runtimeStore.SetStandingOpinion(ctx, "ex-1", "a-1", "AAPL", 0.75, "TREND_LONG"); err != nil {
 		t.Fatalf("SetStandingOpinion: %v", err)
 	}
 
 	key := store.RuntimeKey("ex-1", "a-1")
-	gotOpinion, err := client.HGet(ctx, key, store.FieldStandingOpinion).Result()
+	gotOpinion, err := client.HGet(ctx, key, store.StandingOpinionField("AAPL")).Result()
 	if err != nil {
-		t.Fatalf("HGet standing_opinion: %v", err)
+		t.Fatalf("HGet standing_opinion:AAPL: %v", err)
 	}
 	// FormatFloat with 'f', -1 uses the shortest round-trippable form.
 	if gotOpinion != strconv.FormatFloat(0.75, 'f', -1, 64) {
 		t.Errorf("standing_opinion: got %q want %q", gotOpinion, strconv.FormatFloat(0.75, 'f', -1, 64))
 	}
-	gotStance, err := client.HGet(ctx, key, store.FieldStandingStance).Result()
+	gotStance, err := client.HGet(ctx, key, store.StandingStanceField("AAPL")).Result()
 	if err != nil {
-		t.Fatalf("HGet standing_stance: %v", err)
+		t.Fatalf("HGet standing_stance:AAPL: %v", err)
 	}
 	if gotStance != "TREND_LONG" {
 		t.Errorf("standing_stance: got %q want %q", gotStance, "TREND_LONG")
 	}
 }
 
-// SetWaitStreak writes the streak count as a decimal string.
+// Two instruments on the same agent must use independent hash fields —
+// writing AAPL's opinion must not overwrite GOOG's.
+func TestSetStandingOpinion_TwoInstrumentsIsolated(t *testing.T) {
+	client := openTestRedis(t)
+	ctx := context.Background()
+	runtimeStore := store.NewRedisRuntimeStore(client)
+
+	if err := runtimeStore.SetStandingOpinion(ctx, "ex-1", "a-1", "AAPL", 0.75, "TREND_LONG"); err != nil {
+		t.Fatalf("SetStandingOpinion AAPL: %v", err)
+	}
+	if err := runtimeStore.SetStandingOpinion(ctx, "ex-1", "a-1", "GOOG", -0.5, "WAIT"); err != nil {
+		t.Fatalf("SetStandingOpinion GOOG: %v", err)
+	}
+
+	key := store.RuntimeKey("ex-1", "a-1")
+	aaplOpinion, err := client.HGet(ctx, key, store.StandingOpinionField("AAPL")).Result()
+	if err != nil {
+		t.Fatalf("HGet standing_opinion:AAPL: %v", err)
+	}
+	if aaplOpinion != strconv.FormatFloat(0.75, 'f', -1, 64) {
+		t.Errorf("AAPL standing_opinion: got %q want %q", aaplOpinion, strconv.FormatFloat(0.75, 'f', -1, 64))
+	}
+	googOpinion, err := client.HGet(ctx, key, store.StandingOpinionField("GOOG")).Result()
+	if err != nil {
+		t.Fatalf("HGet standing_opinion:GOOG: %v", err)
+	}
+	if googOpinion != strconv.FormatFloat(-0.5, 'f', -1, 64) {
+		t.Errorf("GOOG standing_opinion: got %q want %q", googOpinion, strconv.FormatFloat(-0.5, 'f', -1, 64))
+	}
+}
+
+// SetWaitStreak writes the streak count as a decimal string under a
+// per-instrument field.
 func TestSetWaitStreak_RoundTrip(t *testing.T) {
 	client := openTestRedis(t)
 	ctx := context.Background()
 	runtimeStore := store.NewRedisRuntimeStore(client)
 
-	if err := runtimeStore.SetWaitStreak(ctx, "ex-1", "a-1", 7); err != nil {
+	if err := runtimeStore.SetWaitStreak(ctx, "ex-1", "a-1", "AAPL", 7); err != nil {
 		t.Fatalf("SetWaitStreak: %v", err)
 	}
 
-	got, err := client.HGet(ctx, store.RuntimeKey("ex-1", "a-1"), store.FieldWaitStreak).Result()
+	got, err := client.HGet(ctx, store.RuntimeKey("ex-1", "a-1"), store.WaitStreakField("AAPL")).Result()
 	if err != nil {
-		t.Fatalf("HGet wait_streak: %v", err)
+		t.Fatalf("HGet wait_streak:AAPL: %v", err)
 	}
 	if got != "7" {
 		t.Errorf("wait_streak: got %q want %q", got, "7")
+	}
+}
+
+// Two instruments on the same agent must track independent wait streaks.
+func TestSetWaitStreak_TwoInstrumentsIsolated(t *testing.T) {
+	client := openTestRedis(t)
+	ctx := context.Background()
+	runtimeStore := store.NewRedisRuntimeStore(client)
+
+	if err := runtimeStore.SetWaitStreak(ctx, "ex-1", "a-1", "AAPL", 3); err != nil {
+		t.Fatalf("SetWaitStreak AAPL: %v", err)
+	}
+	if err := runtimeStore.SetWaitStreak(ctx, "ex-1", "a-1", "GOOG", 9); err != nil {
+		t.Fatalf("SetWaitStreak GOOG: %v", err)
+	}
+
+	key := store.RuntimeKey("ex-1", "a-1")
+	aaplStreak, err := client.HGet(ctx, key, store.WaitStreakField("AAPL")).Result()
+	if err != nil {
+		t.Fatalf("HGet wait_streak:AAPL: %v", err)
+	}
+	if aaplStreak != "3" {
+		t.Errorf("AAPL wait_streak: got %q want %q", aaplStreak, "3")
+	}
+	googStreak, err := client.HGet(ctx, key, store.WaitStreakField("GOOG")).Result()
+	if err != nil {
+		t.Fatalf("HGet wait_streak:GOOG: %v", err)
+	}
+	if googStreak != "9" {
+		t.Errorf("GOOG wait_streak: got %q want %q", googStreak, "9")
+	}
+}
+
+// SetPendingWatch with a non-nil watch stores JSON-encoded confirmation
+// state and the decoded struct matches what was written.
+func TestSetPendingWatch_NonNilRoundTrip(t *testing.T) {
+	client := openTestRedis(t)
+	ctx := context.Background()
+	runtimeStore := store.NewRedisRuntimeStore(client)
+
+	watch := &store.PendingWatch{Direction: 1, ConfirmsSeen: 2, SinceTick: 1_700_000_100}
+	if err := runtimeStore.SetPendingWatch(ctx, "ex-1", "a-1", "AAPL", watch); err != nil {
+		t.Fatalf("SetPendingWatch: %v", err)
+	}
+
+	raw, err := client.HGet(ctx, store.RuntimeKey("ex-1", "a-1"), store.PendingWatchField("AAPL")).Result()
+	if err != nil {
+		t.Fatalf("HGet pending_watch:AAPL: %v", err)
+	}
+	var decoded store.PendingWatch
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		t.Fatalf("unmarshal pending_watch: %v", err)
+	}
+	if decoded != *watch {
+		t.Errorf("pending_watch round-trip: got %+v want %+v", decoded, *watch)
+	}
+}
+
+// SetPendingWatch with nil clears the field — signals the agent is not
+// currently waiting on a confirmation for this instrument.
+func TestSetPendingWatch_NilClearsField(t *testing.T) {
+	client := openTestRedis(t)
+	ctx := context.Background()
+	runtimeStore := store.NewRedisRuntimeStore(client)
+
+	if err := runtimeStore.SetPendingWatch(ctx, "ex-1", "a-1", "AAPL", nil); err != nil {
+		t.Fatalf("SetPendingWatch nil: %v", err)
+	}
+
+	got, err := client.HGet(ctx, store.RuntimeKey("ex-1", "a-1"), store.PendingWatchField("AAPL")).Result()
+	if err != nil {
+		t.Fatalf("HGet pending_watch:AAPL: %v", err)
+	}
+	if got != "" {
+		t.Errorf("nil pending_watch: expected empty string, got %q", got)
+	}
+}
+
+// SetLastCommitTick writes the tick as a decimal string, including a
+// negative sentinel value (NoPriorCommit in the decision package is
+// -1 — this store-layer test only needs to confirm negative ticks
+// round-trip correctly, not reference that constant).
+func TestSetLastCommitTick_RoundTrip(t *testing.T) {
+	client := openTestRedis(t)
+	ctx := context.Background()
+	runtimeStore := store.NewRedisRuntimeStore(client)
+
+	if err := runtimeStore.SetLastCommitTick(ctx, "ex-1", "a-1", "AAPL", 1_700_000_200); err != nil {
+		t.Fatalf("SetLastCommitTick: %v", err)
+	}
+
+	got, err := client.HGet(ctx, store.RuntimeKey("ex-1", "a-1"), store.LastCommitTickField("AAPL")).Result()
+	if err != nil {
+		t.Fatalf("HGet last_commit_tick:AAPL: %v", err)
+	}
+	if got != "1700000200" {
+		t.Errorf("last_commit_tick: got %q want %q", got, "1700000200")
+	}
+}
+
+// SetLastDecidedReadings stores the reading snapshot as a JSON blob
+// under a per-instrument field, and the decoded map matches what was
+// written.
+func TestSetLastDecidedReadings_RoundTrip(t *testing.T) {
+	client := openTestRedis(t)
+	ctx := context.Background()
+	runtimeStore := store.NewRedisRuntimeStore(client)
+
+	readings := map[string]float64{"chart.direction": 0.6, "range.stretch": 0.2}
+	if err := runtimeStore.SetLastDecidedReadings(ctx, "ex-1", "a-1", "AAPL", readings); err != nil {
+		t.Fatalf("SetLastDecidedReadings: %v", err)
+	}
+
+	raw, err := client.HGet(ctx, store.RuntimeKey("ex-1", "a-1"), store.LastDecidedReadingsField("AAPL")).Result()
+	if err != nil {
+		t.Fatalf("HGet last_decided_readings:AAPL: %v", err)
+	}
+	var decoded map[string]float64
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		t.Fatalf("unmarshal last_decided_readings: %v", err)
+	}
+	if len(decoded) != len(readings) {
+		t.Fatalf("last_decided_readings round-trip: got %+v want %+v", decoded, readings)
+	}
+	for field, want := range readings {
+		if decoded[field] != want {
+			t.Errorf("last_decided_readings[%q]: got %v want %v", field, decoded[field], want)
+		}
 	}
 }
 

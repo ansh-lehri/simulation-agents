@@ -12,10 +12,16 @@ import (
 )
 
 // RuntimeSnapshot is the shape of the per-agent runtime state the Redis
-// hash backs. This file writes only the identity + presence fields
-// (initial snapshot) + the four field-level setters below; the decision
-// / position / tip-following working-memory fields are declared here so
-// the type is complete, but their writers live in a downstream stage.
+// hash backs — but only its flat, per-agent fields. Every per-instrument
+// field (perception gate refs, decision working memory: standing
+// opinion/stance, wait streak, last-decided readings, pending watch,
+// last commit tick) is deliberately NOT represented here, the same way
+// PerceptionRefs isn't: a single flat field can't hold one value per
+// instrument an agent watches, and turning every one of them into a
+// map would make this type track the per-instrument field-name helpers
+// in keys.go redundantly. Whatever downstream stage builds the runtime
+// snapshot reader reads those per-instrument blobs directly by field
+// name instead.
 //
 // Never carries frozen traits (those live in Postgres) and never carries
 // positions / cash / P&L (those are broker-owned, re-read fresh each use).
@@ -26,12 +32,6 @@ type RuntimeSnapshot struct {
 	EntryTime      float64 // normalized position in [0,1] over [session_start, session_end]; one-shot DORMANT→ACTIVE trigger
 	NextCheckTime  int64   // staggered lifecycle re-check timestamp
 	IdleSince      int64   // start of the current IDLE run, for the re-entry roll
-
-	// Decision working memory (endogenous agents). Written by a downstream stage.
-	StandingOpinion     float64
-	StandingStance      string
-	WaitStreak          int
-	LastDecidedReadings map[string]float64
 
 	// Position / exit working memory (while an endogenous agent is holding).
 	PositionContext *PositionContext
@@ -73,6 +73,18 @@ type PerceptionRefs struct {
 	LastPhase    string
 }
 
+// PendingWatch mirrors the decision package's PendingWatch for Redis
+// persistence: an agent's in-progress confirmation count toward a
+// commit on one instrument. Kept as its own type here, independent of
+// decision.PendingWatch, so store never depends on decision — the same
+// separation every other working-memory type in this file (PositionContext,
+// Tracking) already keeps.
+type PendingWatch struct {
+	Direction    float64
+	ConfirmsSeen int
+	SinceTick    int64
+}
+
 // RuntimeStore writes the per-session Redis state. All methods are
 // write-on-change: a caller only invokes them when its decision changed
 // the stored value. The reader side (one-shot "load snapshot and
@@ -103,15 +115,37 @@ type RuntimeStore interface {
 	SetTipper(ctx context.Context, exchangeID string, agentID agent.AgentID) error
 
 	// SetStandingOpinion writes the agent's current directional opinion
-	// (a signed float in [-1, +1]) and its associated trading stance.
-	// Written on every tick the agent acts; not written when the agent
-	// passes its act-coin.
-	SetStandingOpinion(ctx context.Context, exchangeID string, agentID agent.AgentID, opinion float64, stance string) error
+	// (a signed float in [-1, +1]) and its associated trading stance,
+	// for one instrument. Written on a RE-DECIDE outcome, never on
+	// COAST — the write-on-change discipline every setter in this file
+	// follows.
+	SetStandingOpinion(ctx context.Context, exchangeID string, agentID agent.AgentID, instrument string, opinion float64, stance string) error
 
 	// SetWaitStreak writes how many consecutive ticks the agent has
-	// chosen to wait rather than act. Used by the decision logic to
-	// detect stale conviction and force a re-evaluation.
-	SetWaitStreak(ctx context.Context, exchangeID string, agentID agent.AgentID, streak int) error
+	// coasted in WAIT on one instrument, without re-deciding. Used by
+	// the re-decide gate to detect a waiter that has coasted long
+	// enough to force a fresh reassessment.
+	SetWaitStreak(ctx context.Context, exchangeID string, agentID agent.AgentID, instrument string, streak int) error
+
+	// SetPendingWatch writes (or, with a nil watch, clears) the agent's
+	// in-progress confirmation count toward a commit on one instrument.
+	// A nil watch means the agent is not currently waiting on anything
+	// — cleared on every COMMIT and every SKIP, written fresh or
+	// updated on every WAIT.
+	SetPendingWatch(ctx context.Context, exchangeID string, agentID agent.AgentID, instrument string, pendingWatch *PendingWatch) error
+
+	// SetLastCommitTick writes the tick of the agent's most recent
+	// commit on one instrument. Written only on COMMIT — this is the
+	// baseline the commit-gate's cooldown shave measures the next
+	// commit attempt against.
+	SetLastCommitTick(ctx context.Context, exchangeID string, agentID agent.AgentID, instrument string, commitTick int64) error
+
+	// SetLastDecidedReadings writes the reading snapshot the re-decide
+	// gate compared against on its most recent RE-DECIDE for one
+	// instrument. An empty/nil map signals this agent has never
+	// decided on this instrument before — the gate's first-ever-decide
+	// case.
+	SetLastDecidedReadings(ctx context.Context, exchangeID string, agentID agent.AgentID, instrument string, readings map[string]float64) error
 
 	// SetPositionContext writes the entry conditions of the agent's
 	// current open position. A nil positionContext clears the field,
@@ -195,22 +229,58 @@ func (redisStore *RedisRuntimeStore) SetTipper(ctx context.Context, exchangeID s
 	return nil
 }
 
-func (redisStore *RedisRuntimeStore) SetStandingOpinion(ctx context.Context, exchangeID string, agentID agent.AgentID, opinion float64, stance string) error {
+func (redisStore *RedisRuntimeStore) SetStandingOpinion(ctx context.Context, exchangeID string, agentID agent.AgentID, instrument string, opinion float64, stance string) error {
 	key := RuntimeKey(exchangeID, agentID)
 	err := redisStore.client.HSet(ctx, key,
-		FieldStandingOpinion, strconv.FormatFloat(opinion, 'f', -1, 64),
-		FieldStandingStance, stance,
+		StandingOpinionField(instrument), strconv.FormatFloat(opinion, 'f', -1, 64),
+		StandingStanceField(instrument), stance,
 	).Err()
 	if err != nil {
-		return fmt.Errorf("store: set standing opinion for %s on %s: %w", agentID, exchangeID, err)
+		return fmt.Errorf("store: set standing opinion for %s/%s on %s: %w", agentID, instrument, exchangeID, err)
 	}
 	return nil
 }
 
-func (redisStore *RedisRuntimeStore) SetWaitStreak(ctx context.Context, exchangeID string, agentID agent.AgentID, streak int) error {
+func (redisStore *RedisRuntimeStore) SetWaitStreak(ctx context.Context, exchangeID string, agentID agent.AgentID, instrument string, streak int) error {
 	key := RuntimeKey(exchangeID, agentID)
-	if err := redisStore.client.HSet(ctx, key, FieldWaitStreak, strconv.Itoa(streak)).Err(); err != nil {
-		return fmt.Errorf("store: set wait streak for %s on %s: %w", agentID, exchangeID, err)
+	if err := redisStore.client.HSet(ctx, key, WaitStreakField(instrument), strconv.Itoa(streak)).Err(); err != nil {
+		return fmt.Errorf("store: set wait streak for %s/%s on %s: %w", agentID, instrument, exchangeID, err)
+	}
+	return nil
+}
+
+func (redisStore *RedisRuntimeStore) SetPendingWatch(ctx context.Context, exchangeID string, agentID agent.AgentID, instrument string, pendingWatch *PendingWatch) error {
+	key := RuntimeKey(exchangeID, agentID)
+	var encoded string
+	if pendingWatch != nil {
+		raw, err := json.Marshal(pendingWatch)
+		if err != nil {
+			return fmt.Errorf("store: marshal pending watch for %s/%s on %s: %w", agentID, instrument, exchangeID, err)
+		}
+		encoded = string(raw)
+	}
+	if err := redisStore.client.HSet(ctx, key, PendingWatchField(instrument), encoded).Err(); err != nil {
+		return fmt.Errorf("store: set pending watch for %s/%s on %s: %w", agentID, instrument, exchangeID, err)
+	}
+	return nil
+}
+
+func (redisStore *RedisRuntimeStore) SetLastCommitTick(ctx context.Context, exchangeID string, agentID agent.AgentID, instrument string, commitTick int64) error {
+	key := RuntimeKey(exchangeID, agentID)
+	if err := redisStore.client.HSet(ctx, key, LastCommitTickField(instrument), strconv.FormatInt(commitTick, 10)).Err(); err != nil {
+		return fmt.Errorf("store: set last commit tick for %s/%s on %s: %w", agentID, instrument, exchangeID, err)
+	}
+	return nil
+}
+
+func (redisStore *RedisRuntimeStore) SetLastDecidedReadings(ctx context.Context, exchangeID string, agentID agent.AgentID, instrument string, readings map[string]float64) error {
+	key := RuntimeKey(exchangeID, agentID)
+	encoded, err := json.Marshal(readings)
+	if err != nil {
+		return fmt.Errorf("store: marshal last decided readings for %s/%s on %s: %w", agentID, instrument, exchangeID, err)
+	}
+	if err := redisStore.client.HSet(ctx, key, LastDecidedReadingsField(instrument), string(encoded)).Err(); err != nil {
+		return fmt.Errorf("store: set last decided readings for %s/%s on %s: %w", agentID, instrument, exchangeID, err)
 	}
 	return nil
 }

@@ -37,12 +37,24 @@ func newRuntimeHandle(
 	}
 }
 
-func (handle *RuntimeHandle) SetStandingOpinion(opinion float64, stance string) error {
-	return handle.runtimeStore.SetStandingOpinion(handle.ctx, handle.exchangeID, handle.agentID, opinion, stance)
+func (handle *RuntimeHandle) SetStandingOpinion(instrument string, opinion float64, stance string) error {
+	return handle.runtimeStore.SetStandingOpinion(handle.ctx, handle.exchangeID, handle.agentID, instrument, opinion, stance)
 }
 
-func (handle *RuntimeHandle) SetWaitStreak(streak int) error {
-	return handle.runtimeStore.SetWaitStreak(handle.ctx, handle.exchangeID, handle.agentID, streak)
+func (handle *RuntimeHandle) SetWaitStreak(instrument string, streak int) error {
+	return handle.runtimeStore.SetWaitStreak(handle.ctx, handle.exchangeID, handle.agentID, instrument, streak)
+}
+
+func (handle *RuntimeHandle) SetPendingWatch(instrument string, pendingWatch *store.PendingWatch) error {
+	return handle.runtimeStore.SetPendingWatch(handle.ctx, handle.exchangeID, handle.agentID, instrument, pendingWatch)
+}
+
+func (handle *RuntimeHandle) SetLastCommitTick(instrument string, commitTick int64) error {
+	return handle.runtimeStore.SetLastCommitTick(handle.ctx, handle.exchangeID, handle.agentID, instrument, commitTick)
+}
+
+func (handle *RuntimeHandle) SetLastDecidedReadings(instrument string, readings map[string]float64) error {
+	return handle.runtimeStore.SetLastDecidedReadings(handle.ctx, handle.exchangeID, handle.agentID, instrument, readings)
 }
 
 func (handle *RuntimeHandle) SetPositionContext(positionContext *store.PositionContext) error {
@@ -64,14 +76,26 @@ func (handle *RuntimeHandle) SetPerceptionRefs(instrument string, refs store.Per
 	return handle.runtimeStore.SetPerceptionRefs(handle.ctx, handle.exchangeID, handle.agentID, instrument, refs)
 }
 
-// instrumentMemory tracks the last perception state for one instrument
-// an agent watches. The gate logic compares current market readings
-// against stored refs to decide whether to rerun perception; lastBundle
-// caches the most recently computed output so the agent can reference
-// it without recomputing on unchanged ticks.
+// instrumentMemory tracks one agent's carried state for one instrument
+// it watches, across both the perception stage and the decision stage.
+// refs/lastBundle are perception's working memory, compared against
+// current market readings to decide whether to rerun perception.
+// standingOpinion/standingStance/lastDecidedReadings/pendingWatch/
+// waitStreak/lastCommitTick are the decision stage's working memory,
+// read and written by whichever future seam calls into the decision
+// package's gate/mixer/commit-gate chain for this agent and this
+// instrument — this struct only carries the fields, it does not
+// mutate them itself.
 type instrumentMemory struct {
 	refs       store.PerceptionRefs
 	lastBundle *decision.PerceptionBundle
+
+	standingOpinion     float64                // this instrument's last-formed signed opinion, carried while coasting
+	standingStance      string                 // "FLAT_IDLE" | "WAIT" — mirrors pendingWatch's presence for quick reads
+	lastDecidedReadings map[string]float64     // the reading snapshot the re-decide gate last compared against; nil until this agent's first-ever decide for this instrument
+	pendingWatch        *decision.PendingWatch // nil when not waiting on a confirmation
+	waitStreak          int                    // consecutive coasted WAIT ticks; anti-freeze counter for the quiet-confirm fix
+	lastCommitTick      int64                  // tick of this agent's last commit on this instrument; the Go zero value (0) is NOT the "never committed" sentinel — whoever first constructs an instrumentMemory for an agent's decision stage must set this to decision.NoPriorCommit explicitly, or the very first cooldown check will misread a fresh instrument as having committed at tick zero
 }
 
 // workingAgent is one agent's in-memory state for the duration of a
@@ -81,7 +105,7 @@ type instrumentMemory struct {
 // Core inside decide() on demand.
 type workingAgent struct {
 	traits         agent.TraitVector
-	capitalHandle  string  // Core account id used for GetObservation and PunchOrder
+	capitalHandle  string // Core account id used for GetObservation and PunchOrder
 	tradingCapital int64
 	presence       string  // one of store.PresenceDormant / Active / Idle / Done / Retired
 	entryTime      float64 // normalized [0,1]; DORMANT→ACTIVE trigger stamped by 2c
@@ -89,8 +113,8 @@ type workingAgent struct {
 	lastCheckTime  int64   // unix seconds; previous check wall-clock, used to compute the elapsed Δ for rate→probability conversion
 	idleSince      int64   // unix seconds; set on step-out→IDLE; feeds re-entry and give-up rolls
 	memoryHandle   *RuntimeHandle
-	agentRNG       *rand.Rand                    // independent per-agent randomness stream, seeded from the session RNG at build time
-	perception     map[string]*instrumentMemory  // per-instrument perception working memory; keyed by instrument symbol
+	agentRNG       *rand.Rand                   // independent per-agent randomness stream, seeded from the session RNG at build time
+	perception     map[string]*instrumentMemory // per-instrument perception working memory; keyed by instrument symbol
 }
 
 // workingSet is the full in-memory authority for one exchange session.

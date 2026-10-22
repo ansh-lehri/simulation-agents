@@ -39,14 +39,6 @@ const (
 	FieldLoadStatus = "load_status"
 	FieldLoadError  = "load_error"
 
-	// Decision working-memory fields — the endogenous agent's
-	// in-tick opinion and trading posture, written by the decision
-	// logic on each presence-active turn.
-	FieldStandingOpinion     = "standing_opinion"
-	FieldStandingStance      = "standing_stance"
-	FieldWaitStreak          = "wait_streak"
-	FieldLastDecidedReadings = "last_decided_readings"
-
 	// Position working-memory fields — entry conditions of an open
 	// position, written when the agent enters and cleared on exit.
 	FieldPositionContext = "position_context"
@@ -57,7 +49,6 @@ const (
 	FieldTracking       = "tracking"
 	FieldMyExitLevel    = "my_exit_level"
 	FieldSubmitAt       = "submit_at"
-
 )
 
 // GateRefsField returns the per-instrument hash field name for the
@@ -66,6 +57,52 @@ const (
 // keyed by instrument so per-instrument perception memory never collides.
 func GateRefsField(instrument string) string {
 	return "gate_refs:" + instrument
+}
+
+// Decision working-memory field helpers — every one of these is
+// per-instrument, mirroring GateRefsField's pattern, because a single
+// agent can carry an independent opinion, stance, confirmation watch,
+// and commit cooldown for each instrument it decides on. These replace
+// the old flat standing_opinion/standing_stance/wait_streak field
+// names, which collided across instruments for any agent watching more
+// than one.
+
+// StandingOpinionField returns the per-instrument hash field name for
+// an agent's last-formed signed opinion on that instrument.
+func StandingOpinionField(instrument string) string {
+	return "standing_opinion:" + instrument
+}
+
+// StandingStanceField returns the per-instrument hash field name for
+// an agent's trading posture ("FLAT_IDLE" or "WAIT") on that instrument.
+func StandingStanceField(instrument string) string {
+	return "standing_stance:" + instrument
+}
+
+// WaitStreakField returns the per-instrument hash field name for how
+// many consecutive ticks an agent has coasted in WAIT on that
+// instrument.
+func WaitStreakField(instrument string) string {
+	return "wait_streak:" + instrument
+}
+
+// LastDecidedReadingsField returns the per-instrument hash field name
+// for the reading snapshot an agent's re-decide gate last compared
+// against on that instrument.
+func LastDecidedReadingsField(instrument string) string {
+	return "last_decided_readings:" + instrument
+}
+
+// PendingWatchField returns the per-instrument hash field name for an
+// agent's in-progress confirmation watch on that instrument.
+func PendingWatchField(instrument string) string {
+	return "pending_watch:" + instrument
+}
+
+// LastCommitTickField returns the per-instrument hash field name for
+// the tick of an agent's last commit on that instrument.
+func LastCommitTickField(instrument string) string {
+	return "last_commit_tick:" + instrument
 }
 
 // LoadStatusFailed is the stored value for FieldLoadStatus when

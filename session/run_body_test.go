@@ -462,9 +462,9 @@ func (fake *recordingRunCore) PunchOrder(_ context.Context, _ core.OrderPunchReq
 // MarkSessionLoadFailed call counts so the Run-body tests can
 // assert the ordering + DORMANT invariant.
 type recordingRunRuntime struct {
-	stampCount         atomic.Int32
-	setPresenceCount   atomic.Int32
-	markFailedCount    atomic.Int32
+	stampCount       atomic.Int32
+	setPresenceCount atomic.Int32
+	markFailedCount  atomic.Int32
 }
 
 func newRecordingRunRuntime() *recordingRunRuntime {
@@ -521,10 +521,19 @@ func (fake *recordingRunRuntime) MarkSessionLoadFailed(ctx context.Context, exch
 	return nil
 }
 
-func (fake *recordingRunRuntime) SetStandingOpinion(_ context.Context, _ string, _ agent.AgentID, _ float64, _ string) error {
+func (fake *recordingRunRuntime) SetStandingOpinion(_ context.Context, _ string, _ agent.AgentID, _ string, _ float64, _ string) error {
 	return nil
 }
-func (fake *recordingRunRuntime) SetWaitStreak(_ context.Context, _ string, _ agent.AgentID, _ int) error {
+func (fake *recordingRunRuntime) SetWaitStreak(_ context.Context, _ string, _ agent.AgentID, _ string, _ int) error {
+	return nil
+}
+func (fake *recordingRunRuntime) SetPendingWatch(_ context.Context, _ string, _ agent.AgentID, _ string, _ *store.PendingWatch) error {
+	return nil
+}
+func (fake *recordingRunRuntime) SetLastCommitTick(_ context.Context, _ string, _ agent.AgentID, _ string, _ int64) error {
+	return nil
+}
+func (fake *recordingRunRuntime) SetLastDecidedReadings(_ context.Context, _ string, _ agent.AgentID, _ string, _ map[string]float64) error {
 	return nil
 }
 func (fake *recordingRunRuntime) SetPositionContext(_ context.Context, _ string, _ agent.AgentID, _ *store.PositionContext) error {
@@ -546,7 +555,7 @@ var _ store.RuntimeStore = (*recordingRunRuntime)(nil)
 // Run makes on the happy path, so the tests can assert on
 // arguments as well as call count.
 type recordingRunScheduler struct {
-	callCount         atomic.Int32
+	callCount          atomic.Int32
 	observedExchangeID string
 }
 

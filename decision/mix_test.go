@@ -23,20 +23,20 @@ func floatPtr(value float64) *float64 { return &value }
 // branch regardless of what the RNG draws — this is what lets the
 // bypass tests be deterministic without needing to reason about the
 // exact stream of float64 values a given seed produces.
-func TestMix_NoiseBypass_AlwaysTriggersAndReturnsAnImpulse(t *testing.T) {
+func TestNoiseImpulse_AlwaysTriggersAndReturnsAnImpulse(t *testing.T) {
 	disposition := agent.Disposition{Trend: 0, MeanRev: 0, Noise: 1}
 	params := testMixerParams()
 
 	sawPositive, sawNegative := false, false
 	for seed := uint64(0); seed < 50; seed++ {
 		agentRNG := rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15))
-		opinion, bypass := mix(traitVerdicts{}, disposition, agentRNG, params)
+		opinion, hit := noiseImpulse(disposition, agentRNG, params)
 
-		if !bypass {
-			t.Fatalf("seed %d: bypass=false, want true (Noise=1 must always trigger)", seed)
+		if !hit {
+			t.Fatalf("seed %d: hit=false, want true (Noise=1 must always trigger)", seed)
 		}
 		if opinion == nil {
-			t.Fatalf("seed %d: opinion=nil on a bypass, want a random impulse", seed)
+			t.Fatalf("seed %d: opinion=nil on a hit, want a random impulse", seed)
 		}
 		if opinion.Conviction != params.NoiseImpulseConviction {
 			t.Errorf("seed %d: Conviction=%v, want %v", seed, opinion.Conviction, params.NoiseImpulseConviction)
@@ -55,18 +55,21 @@ func TestMix_NoiseBypass_AlwaysTriggersAndReturnsAnImpulse(t *testing.T) {
 	}
 }
 
-// A disposition whose Noise weight is 0 can never take the bypass
-// branch, regardless of what the RNG draws — the complementary
-// determinism anchor to the Noise=1 case above.
-func TestMix_NoiseBypass_NeverTriggersWhenNoiseWeightIsZero(t *testing.T) {
+// A disposition whose Noise weight is 0 can never hit, regardless of
+// what the RNG draws — the complementary determinism anchor to the
+// Noise=1 case above.
+func TestNoiseImpulse_NeverTriggersWhenNoiseWeightIsZero(t *testing.T) {
 	disposition := agent.Disposition{Trend: 0.5, MeanRev: 0.5, Noise: 0}
 	params := testMixerParams()
 
 	for seed := uint64(0); seed < 20; seed++ {
 		agentRNG := rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15))
-		_, bypass := mix(traitVerdicts{trend: floatPtr(0.5)}, disposition, agentRNG, params)
-		if bypass {
-			t.Fatalf("seed %d: bypass=true, want false (Noise=0 must never trigger)", seed)
+		opinion, hit := noiseImpulse(disposition, agentRNG, params)
+		if hit {
+			t.Fatalf("seed %d: hit=true, want false (Noise=0 must never trigger)", seed)
+		}
+		if opinion != nil {
+			t.Errorf("seed %d: opinion=%+v, want nil on a miss", seed, opinion)
 		}
 	}
 }
@@ -75,12 +78,9 @@ func TestMix_ZeroVerdicts_ReturnsNilOpinion(t *testing.T) {
 	disposition := agent.Disposition{Trend: 0.5, MeanRev: 0.5, Noise: 0}
 	agentRNG := rand.New(rand.NewPCG(1, 2))
 
-	opinion, bypass := mix(traitVerdicts{}, disposition, agentRNG, testMixerParams())
+	opinion := mix(traitVerdicts{}, disposition, agentRNG, testMixerParams())
 	if opinion != nil {
 		t.Errorf("opinion: got %+v, want nil", opinion)
-	}
-	if bypass {
-		t.Error("bypass: got true, want false — zero verdicts is a SKIP, not an impulse")
 	}
 }
 
@@ -97,10 +97,7 @@ func TestMix_OneVerdict_UsedVerbatimWithNoMultiplier(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		agentRNG := rand.New(rand.NewPCG(5, 6))
-		opinion, bypass := mix(testCase.verdicts, disposition, agentRNG, params)
-		if bypass {
-			t.Errorf("%s: bypass=true, want false", testCase.name)
-		}
+		opinion := mix(testCase.verdicts, disposition, agentRNG, params)
 		if opinion == nil {
 			t.Fatalf("%s: opinion=nil, want a present opinion", testCase.name)
 		}
@@ -124,8 +121,7 @@ func TestMix_OneVerdict_UsedVerbatimWithNoMultiplier(t *testing.T) {
 // Property test: across many random (trend verdict, mean-rev verdict,
 // trend weight, mean-rev weight, seed) combinations, the secondary
 // trait may dampen or boost conviction but must never flip which way
-// the opinion points. Noise is forced to 0 so every draw lands on the
-// dominant/secondary combine path, never the bypass branch.
+// the opinion points.
 func TestMix_SecondaryNeverFlipsDirection(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		trendVerdict := rapid.Float64Range(-1, 1).Draw(rt, "trend_verdict")
@@ -139,10 +135,7 @@ func TestMix_SecondaryNeverFlipsDirection(t *testing.T) {
 		params := MixerParams{SecondarySensitivity: secondarySensitivity}
 		agentRNG := rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15))
 
-		opinion, bypass := mix(traitVerdicts{trend: &trendVerdict, meanRev: &meanRevVerdict}, disposition, agentRNG, params)
-		if bypass {
-			rt.Fatal("bypass=true with Noise=0 — the coin must never trigger")
-		}
+		opinion := mix(traitVerdicts{trend: &trendVerdict, meanRev: &meanRevVerdict}, disposition, agentRNG, params)
 		if opinion == nil {
 			rt.Fatal("opinion=nil with two present verdicts — SKIP must only occur with zero verdicts")
 		}
@@ -174,8 +167,8 @@ func TestMix_TieBreak_DeterministicButActuallyRandom(t *testing.T) {
 	verdicts := traitVerdicts{trend: floatPtr(0.8), meanRev: floatPtr(-0.6)}
 
 	for seed := uint64(0); seed < 10; seed++ {
-		first, _ := mix(verdicts, disposition, rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15)), params)
-		second, _ := mix(verdicts, disposition, rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15)), params)
+		first := mix(verdicts, disposition, rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15)), params)
+		second := mix(verdicts, disposition, rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15)), params)
 		if first.Direction != second.Direction {
 			t.Fatalf("seed %d: tie-break not deterministic — first=%v second=%v", seed, first.Direction, second.Direction)
 		}
@@ -183,7 +176,7 @@ func TestMix_TieBreak_DeterministicButActuallyRandom(t *testing.T) {
 
 	sawTrendChosen, sawMeanRevChosen := false, false
 	for seed := uint64(0); seed < 50; seed++ {
-		opinion, _ := mix(verdicts, disposition, rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15)), params)
+		opinion := mix(verdicts, disposition, rand.New(rand.NewPCG(seed, seed^0x9E3779B97F4A7C15)), params)
 		if opinion.Direction == 1 {
 			sawTrendChosen = true
 		} else {

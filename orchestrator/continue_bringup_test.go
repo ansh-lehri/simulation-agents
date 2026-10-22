@@ -510,10 +510,19 @@ func (fake *recordingRuntimeStore) SetTipper(ctx context.Context, exchangeID str
 	return nil
 }
 
-func (fake *recordingRuntimeStore) SetStandingOpinion(_ context.Context, _ string, _ agent.AgentID, _ float64, _ string) error {
+func (fake *recordingRuntimeStore) SetStandingOpinion(_ context.Context, _ string, _ agent.AgentID, _ string, _ float64, _ string) error {
 	return nil
 }
-func (fake *recordingRuntimeStore) SetWaitStreak(_ context.Context, _ string, _ agent.AgentID, _ int) error {
+func (fake *recordingRuntimeStore) SetWaitStreak(_ context.Context, _ string, _ agent.AgentID, _ string, _ int) error {
+	return nil
+}
+func (fake *recordingRuntimeStore) SetPendingWatch(_ context.Context, _ string, _ agent.AgentID, _ string, _ *store.PendingWatch) error {
+	return nil
+}
+func (fake *recordingRuntimeStore) SetLastCommitTick(_ context.Context, _ string, _ agent.AgentID, _ string, _ int64) error {
+	return nil
+}
+func (fake *recordingRuntimeStore) SetLastDecidedReadings(_ context.Context, _ string, _ agent.AgentID, _ string, _ map[string]float64) error {
 	return nil
 }
 func (fake *recordingRuntimeStore) SetPositionContext(_ context.Context, _ string, _ agent.AgentID, _ *store.PositionContext) error {
@@ -606,7 +615,7 @@ func (fake *recordingActiveSessionStore) lastRecord() store.ActiveSessionRecord 
 }
 
 type programmableScenarioProvider struct {
-	effectiveCount         atomic.Int32
+	effectiveCount          atomic.Int32
 	effectiveParamsToReturn *generator.EffectiveParams
 	curveEffectiveToReturn  *generator.CurveEffective
 }
