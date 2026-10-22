@@ -1,11 +1,23 @@
 package decision
 
 import (
+	"math"
 	"math/rand/v2"
 
 	"simulation-agents/agent"
 	"simulation-agents/core"
 	"simulation-agents/store"
+)
+
+// Exit-profile mode identifiers, drawn at generation time
+// (orchestrator/generator/draw_exit_and_hold.go) into
+// agent.ExitProfile.Mode. Fixed by the generator's own calibration —
+// an agent.TraitVector reaching this package with any other value is
+// an upstream invariant violation, not a case to handle gracefully.
+const (
+	exitModeDistance = "distance"
+	exitModeLevel    = "level"
+	exitModeHybrid   = "hybrid"
 )
 
 // ManageInput bundles everything Manage needs to decide what to do
@@ -73,13 +85,232 @@ func Manage(input ManageInput) (ExecIntent, bool) {
 	if input.Position.Qty == 0 {
 		return ExecIntent{}, false
 	}
+	if input.Traits.Exit == nil || input.Traits.MaxHold == nil {
+		panic("decision: Manage called on a TraitVector missing exit_profile/max_hold — these are generated once at mint for every endogenous agent and must never be absent while holding a position")
+	}
 
-	// The exit check (stop/reversal/target/time-stop) and the
-	// add-check land in later stages of this build; they will read
-	// this position's live picture (entry direction, unrealized P&L,
-	// closeable quantity, and the entry channel/tick resolved below)
-	// to decide close/add/hold.
+	entryDirection := directionOf(float64(input.Position.Qty))
+	entryChannel, entryTick := liveEntryChannelAndTick(input.PositionContext, input.Tick.TickIndex)
+
+	if closeIntent, exit := checkExit(input, entryDirection, entryChannel, entryTick); exit {
+		return closeIntent, true
+	}
+
+	// The add-check lands in the next stage of this build; it will use
+	// unrealizedPnL (below) against this position to decide add/hold.
 	return ExecIntent{}, false
+}
+
+// checkExit evaluates this tick's exit condition. A level-mode agent
+// whose structural levels aren't available this tick exits
+// unconditionally, regardless of price — the Y-rule, the deliberate
+// chart-blind cost of choosing a level-based exit. Otherwise, the
+// four triggers run in fixed priority — stop, then signal-reversal,
+// then target, then time-stop — as a tagless switch: Go evaluates
+// each case top to bottom and stops at the first true one, which is
+// exactly "first trigger wins, the rest are never evaluated." Every
+// branch that fires produces the identical close intent; only
+// opposite(entry_dir) and the fact that something fired matter
+// downstream, not which condition it was.
+func checkExit(input ManageInput, entryDirection float64, entryChannel string, entryTick int64) (ExecIntent, bool) {
+	stop, target, abruptExit := exitPrices(
+		input.Traits.Exit, input.Position.WeightedAvgEntry, entryDirection,
+		entryChannel, input.Bundle, input.CurrentPrice,
+	)
+
+	switch {
+	case abruptExit:
+	case stopTriggered(input.CurrentPrice, stop, entryDirection):
+	case reversalTriggered(entryChannel, entryDirection, input.CurrentPrice, input.Bundle):
+	case targetTriggered(input.CurrentPrice, target, entryDirection):
+	case timeStopTriggered(input.Tick.TickIndex, entryTick, *input.Traits.MaxHold):
+	default:
+		return ExecIntent{}, false
+	}
+	return ExecIntent{Action: ExecIntentActionClose, Direction: -entryDirection}, true
+}
+
+// exitPrices derives this tick's stop and target prices from the
+// agent's frozen exit profile. distance prices off the position's own
+// entry; level prices off this tick's perceived structural levels,
+// falling back to distance only for hybrid and only when those levels
+// aren't available — never the reverse order. A pure "level" agent
+// that can't resolve levels this tick gets no stop/target at all —
+// abruptExit tells the caller to close unconditionally instead.
+func exitPrices(
+	exitProfile *agent.ExitProfile,
+	weightedAvgEntry int64,
+	entryDirection float64,
+	entryChannel string,
+	bundle *PerceptionBundle,
+	currentPrice int64,
+) (stop, target int64, abruptExit bool) {
+	switch exitProfile.Mode {
+	case exitModeDistance:
+		stop, target = distanceExitPrices(weightedAvgEntry, entryDirection, exitProfile)
+		return stop, target, false
+	case exitModeLevel:
+		support, resistance, ok := levelsFor(entryChannel, bundle, currentPrice)
+		if !ok {
+			return 0, 0, true
+		}
+		stop, target = levelExitPrices(entryDirection, exitProfile, support, resistance)
+		return stop, target, false
+	case exitModeHybrid:
+		if support, resistance, ok := levelsFor(entryChannel, bundle, currentPrice); ok {
+			stop, target = levelExitPrices(entryDirection, exitProfile, support, resistance)
+			return stop, target, false
+		}
+		stop, target = distanceExitPrices(weightedAvgEntry, entryDirection, exitProfile)
+		return stop, target, false
+	default:
+		panic("decision: exitPrices called on an agent.ExitProfile with unknown Mode " + exitProfile.Mode)
+	}
+}
+
+// distanceExitPrices prices stop/target as a percentage of the
+// position's own entry price. TargetPct is guaranteed greater than
+// StopPct at generation (TargetPct = StopPct × rewardRisk), so target
+// always sits further from entry than stop without this function
+// re-deriving that guarantee.
+func distanceExitPrices(weightedAvgEntry int64, entryDirection float64, exitProfile *agent.ExitProfile) (stop, target int64) {
+	stop = scaledTick(weightedAvgEntry, -entryDirection*exitProfile.StopPct)
+	target = scaledTick(weightedAvgEntry, entryDirection*exitProfile.TargetPct)
+	return stop, target
+}
+
+// levelExitPrices prices stop/target off this tick's structural
+// levels. A long position stops below support and targets below
+// resistance (banking profit a little early, before fully reaching
+// it); a short position mirrors both onto the opposite level, per the
+// same buffer-as-fraction-of-level-price shape.
+func levelExitPrices(entryDirection float64, exitProfile *agent.ExitProfile, support, resistance int64) (stop, target int64) {
+	stopBase, targetBase := support, resistance
+	if entryDirection < 0 {
+		stopBase, targetBase = resistance, support
+	}
+	stop = scaledTick(stopBase, -entryDirection*exitProfile.StopBuffer)
+	target = scaledTick(targetBase, -entryDirection*exitProfile.TargetBuffer)
+	return stop, target
+}
+
+// scaledTick multiplies an integer tick price by (1 + fraction) and
+// rounds once to the nearest tick — the one int64 rounding boundary
+// every exit-price calculation shares, consistent with 4a's level
+// rounding (round once at the boundary, never carry floats through
+// multiple steps).
+func scaledTick(value int64, fraction float64) int64 {
+	return int64(math.Round(float64(value) * (1 + fraction)))
+}
+
+// levelsFor resolves the structural support/resistance levels for the
+// channel this position was entered on. A chart entry reads 4a's
+// nearest key levels either side of the current price; a range entry
+// reads the current range bounds directly; a noise entry read no
+// structure at entry, so it has nothing to look up here. Any missing
+// channel, unreadable reading, or (for chart) a side with no
+// qualifying level at all reports ok=false.
+func levelsFor(entryChannel string, bundle *PerceptionBundle, currentPrice int64) (support, resistance int64, ok bool) {
+	switch entryChannel {
+	case "chart":
+		return chartLevels(bundle, currentPrice)
+	case "range":
+		return rangeLevels(bundle)
+	default:
+		// "noise", and the empty string the nil-positionContext
+		// degrade reports, both mean no structure to look up.
+		return 0, 0, false
+	}
+}
+
+// chartLevels picks the nearest key level below the current price as
+// support and the nearest one above as resistance. Both sides must be
+// present — a one-sided level list (e.g. only resistance above, no
+// support below) is not enough to price both a stop and a target.
+func chartLevels(bundle *PerceptionBundle, currentPrice int64) (support, resistance int64, ok bool) {
+	if bundle == nil || bundle.Chart == nil || !bundle.Chart.ReadOK {
+		return 0, 0, false
+	}
+	haveSupport, haveResistance := false, false
+	for _, level := range bundle.Chart.KeyLevels {
+		switch {
+		case level < currentPrice && (!haveSupport || level > support):
+			support, haveSupport = level, true
+		case level > currentPrice && (!haveResistance || level < resistance):
+			resistance, haveResistance = level, true
+		}
+	}
+	if !haveSupport || !haveResistance {
+		return 0, 0, false
+	}
+	return support, resistance, true
+}
+
+// rangeLevels reads the current range bounds directly as
+// support/resistance — a range reading always carries both sides when
+// readable, unlike a chart's open-ended key-level list.
+func rangeLevels(bundle *PerceptionBundle) (support, resistance int64, ok bool) {
+	if bundle == nil || bundle.Range == nil || !bundle.Range.ReadOK {
+		return 0, 0, false
+	}
+	return bundle.Range.RangeBounds[0], bundle.Range.RangeBounds[1], true
+}
+
+// stopTriggered reports whether price has reached or passed the stop:
+// at-or-below for a long, at-or-above for a short.
+func stopTriggered(currentPrice, stop int64, entryDirection float64) bool {
+	if entryDirection > 0 {
+		return currentPrice <= stop
+	}
+	return currentPrice >= stop
+}
+
+// targetTriggered reports whether price has reached or passed the
+// target: at-or-above for a long, at-or-below for a short.
+func targetTriggered(currentPrice, target int64, entryDirection float64) bool {
+	if entryDirection > 0 {
+		return currentPrice >= target
+	}
+	return currentPrice <= target
+}
+
+// reversalTriggered reuses THIS tick's already-produced bundle — it
+// never triggers a fresh perceive. A chart entry reverses when the
+// chart's direction has actively turned against entryDirection
+// (DirFlat is not active opposition, so it never counts); a range
+// entry reverses when price has broken clean outside the range bounds
+// — the range reading carries no direction of its own, so this can
+// fire even while the position is in profit, and is deliberately
+// non-redundant with the stop/target checks for that reason; a noise
+// entry read no signal at entry and so never reverses.
+func reversalTriggered(entryChannel string, entryDirection float64, currentPrice int64, bundle *PerceptionBundle) bool {
+	switch entryChannel {
+	case "chart":
+		if bundle == nil || bundle.Chart == nil || !bundle.Chart.ReadOK {
+			return false
+		}
+		if entryDirection > 0 {
+			return bundle.Chart.Direction == DirDown
+		}
+		return bundle.Chart.Direction == DirUp
+	case "range":
+		if bundle == nil || bundle.Range == nil || !bundle.Range.ReadOK {
+			return false
+		}
+		low, high := bundle.Range.RangeBounds[0], bundle.Range.RangeBounds[1]
+		return currentPrice < low || currentPrice > high
+	default:
+		// "noise" and the empty-string nil-positionContext degrade
+		// both read no structure to reverse against.
+		return false
+	}
+}
+
+// timeStopTriggered compares ticks held against this agent's frozen
+// hold cap. Strictly greater-than: a position held for exactly
+// maxHold ticks has not yet overstayed it.
+func timeStopTriggered(currentTick, entryTick int64, maxHold int) bool {
+	return currentTick-entryTick > int64(maxHold)
 }
 
 // unrealizedPnL computes this instrument's mark-to-market profit or
@@ -88,6 +319,16 @@ func Manage(input ManageInput) (ExecIntent, bool) {
 // long/short branch belongs here.
 func unrealizedPnL(currentPrice, weightedAvgEntry, qty int64) int64 {
 	return (currentPrice - weightedAvgEntry) * qty
+}
+
+// closeableQuantity is how many units of this position are not
+// already sitting behind a resting order. Part of this stage's
+// documented live picture, but no exit/add branch in this package
+// reads it today — 4c's own close path (buildCloseOrder, execute.go)
+// independently recomputes the identical value from the ambient
+// position it reads, which is what actually sizes a close order.
+func closeableQuantity(qty, reservedQty int64) int64 {
+	return absInt64(qty) - reservedQty
 }
 
 // liveEntryChannelAndTick resolves the entry-channel and entry-tick
