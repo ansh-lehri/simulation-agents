@@ -306,13 +306,29 @@ func applyQtyNoise(qty int64, skill float64, rng *rand.Rand, sigmaExec float64) 
 // applyPriceNoise perturbs a placed limit price by a fresh additive
 // draw scaled by the instrument's spread. A perturbed buy may end up
 // crossing the ask — a low-skill agent accidentally paying up is the
-// accepted realism this draw buys.
+// accepted realism this draw buys — but the draw must never carry the
+// price to zero or below: a limit order's price is required strictly
+// positive by the broker contract, so this is the one post-noise
+// floor every limit price gets, mirroring the post-noise ceiling
+// already reapplied to a sized quantity below.
 func applyPriceNoise(limitPrice, spread int64, skill float64, rng *rand.Rand, sigmaExec float64) int64 {
 	width := executionNoiseWidth(skill, sigmaExec)
 	if width <= 0 {
 		return limitPrice
 	}
-	return int64(math.Round(float64(limitPrice) + rng.NormFloat64()*width*float64(spread)))
+	noisyLimitPrice := int64(math.Round(float64(limitPrice) + rng.NormFloat64()*width*float64(spread)))
+	return floorInt64(noisyLimitPrice, 1)
+}
+
+// floorInt64 raises value up to floor, never down. Used as the
+// post-noise safety net for a placed limit price: a noise draw may
+// perturb magnitude in either direction, but may never be allowed to
+// carry a price to zero or below.
+func floorInt64(value, floor int64) int64 {
+	if value < floor {
+		return floor
+	}
+	return value
 }
 
 // clampInt64 restricts value to [floor, ceiling]. Used as the
