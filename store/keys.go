@@ -39,10 +39,6 @@ const (
 	FieldLoadStatus = "load_status"
 	FieldLoadError  = "load_error"
 
-	// Position working-memory fields — entry conditions of an open
-	// position, written when the agent enters and cleared on exit.
-	FieldPositionContext = "position_context"
-
 	// Tip-following state fields — herd agent's current tracking
 	// target and submission intent.
 	FieldLastActedTipID = "last_acted_tip_id"
@@ -103,6 +99,17 @@ func PendingWatchField(instrument string) string {
 // the tick of an agent's last commit on that instrument.
 func LastCommitTickField(instrument string) string {
 	return "last_commit_tick:" + instrument
+}
+
+// PositionContextField returns the per-instrument hash field name for
+// the entry conditions of an agent's open position on that instrument
+// — written when the agent opens or adds to the position, read by the
+// position-exit logic while holding. An agent holding more than one
+// instrument carries one independent entry record per instrument, the
+// same reason every other decision working-memory field in this file
+// is keyed by instrument.
+func PositionContextField(instrument string) string {
+	return "position_context:" + instrument
 }
 
 // LoadStatusFailed is the stored value for FieldLoadStatus when
