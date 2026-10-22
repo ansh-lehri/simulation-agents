@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"simulation-agents/agent"
+	"simulation-agents/decision"
 	"simulation-agents/orchestrator"
 	"simulation-agents/orchestrator/generator"
 	"simulation-agents/scenario"
@@ -124,17 +125,58 @@ func defaultGenParams() generator.GenParams {
 
 		ChannelWeightsDirichletConcentration: 1,
 
-		// TraitChannelSets is the one placeholder the orientation
-		// explicitly flags: the finalized channel-to-trait map is
-		// still owed by the perception spec. The mechanism (Dirichlet
-		// over the trait's channel list) is final; only the per-trait
-		// vectors below are placeholder. Replacing them when the real
-		// map lands is the entire swap-in.
+		// TraitChannelSets drives the per-agent channel_weights draw:
+		// for each trait listed here, generation draws a Dirichlet
+		// weight over exactly these channels. It no longer lists
+		// "noise" — the decision package's TraitChannelRoles map is
+		// now the source of truth for which trait reads which channel,
+		// and noise reads none, so there is nothing for it to weight.
 		TraitChannelSets: map[string][]string{
 			"trend":    {"chart", "volume"},
 			"mean_rev": {"range", "volume"},
-			"noise":    {"time_of_session"},
 		},
+	}
+}
+
+// defaultDecisionParams returns the current placeholder calibration for
+// the flat-agent entry decision (the mixer, the re-decide gate, and the
+// commit-gate shaves). As with defaultGenParams, these numbers are not
+// fitted to any measurement — they are starting points a calibration
+// pass replaces; the decision package only depends on the shape of
+// decision.Params, never on these specific values.
+func defaultDecisionParams() decision.Params {
+	return decision.Params{
+		Mixer: decision.MixerParams{
+			SecondarySensitivity:   0.5,
+			NoiseImpulseConviction: 0.5,
+		},
+		Interpretation: decision.InterpretationParams{
+			TrendCleanlinessBoost:        0.5,
+			TrendVolumeConfirmBoost:      0.2,
+			TrendVolumeLowDamp:           0.3,
+			MeanRevVolumeLowExtremeBoost: 0.2,
+		},
+		Gate: decision.GateParams{
+			WaitReassessThreshold: 5,
+		},
+		TimeShave: decision.TimeShaveParams{
+			OpenDamp:          0.3,
+			CloseDamp:         0.4,
+			OpenRampExponent:  2,
+			CloseRampExponent: 2,
+			Floor:             0.3,
+		},
+		SpreadShave: decision.SpreadShaveParams{
+			SpreadSensitivity: 1.0,
+			NormalSpread:      0.001,
+			Floor:             0.3,
+		},
+		CooldownShave: decision.CooldownShaveParams{
+			Damp:  0.5,
+			Tau:   10,
+			Floor: 0.4,
+		},
+		ThetaAddMargin: 0.1,
 	}
 }
 
