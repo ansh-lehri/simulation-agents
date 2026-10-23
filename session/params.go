@@ -115,6 +115,24 @@ type Params struct {
 	// check. Zero values default to [20 min, 40 min].
 	CheckIntervalMin time.Duration
 	CheckIntervalMax time.Duration
+
+	// ExpectedQuitsPerSession is the expected number of canonical
+	// agents that permanently quit at the end of one session — the
+	// population-level intensity the close-of-session quit roll is
+	// built from (each agent's own per-session quit probability is
+	// this value divided by the population size). Applied once, in
+	// the canonical shutdown tail, over the full population regardless
+	// of presence state.
+	ExpectedQuitsPerSession float64
+
+	// BrokerDefaultFundedCash is the broker's flat per-session funding
+	// figure for a canonical account. The close-of-session capital fold
+	// reads this session's realized P&L as (durable trading cash minus
+	// this figure) and applies that delta to the agent's carried
+	// trading capital. Distinct from agent.CapitalParams.DefaultFundedCash
+	// (the capital-draw ceiling used at bring-up) even though both are
+	// sourced from the same composition-root constant today.
+	BrokerDefaultFundedCash int64
 }
 
 // LifecycleCurveParams carries the baseline lifecycle-rate dials and

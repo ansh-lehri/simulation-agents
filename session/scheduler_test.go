@@ -369,6 +369,52 @@ func TestDispatcherExitsOnContextCancel(t *testing.T) {
 	}
 }
 
+// TestStartScheduler_CanonicalEmitsCloseEffectsAfterRunLoopExits: for a
+// canonical session whose SessionEnd has already passed, runLoop
+// returns on its very first iteration, and StartScheduler must then
+// emit exactly one close-of-session decision per agent (retire-or-fold,
+// never both) before returning.
+func TestStartScheduler_CanonicalEmitsCloseEffectsAfterRunLoopExits(t *testing.T) {
+	t.Parallel()
+
+	sched := newTestLiveScheduler(t, stubCoreClient{}, stubRuntimeStore{}, stubMarketDataStore{})
+	population := makeOrderedPopulation(3, 0)
+	lifecycleChannel := make(chan LifecycleDecision, len(population.All()))
+
+	sched.StartScheduler(context.Background(), canonicalBringUpRequest(), population, nil, lifecycleChannel)
+	close(lifecycleChannel)
+
+	var decisions []LifecycleDecision
+	for decision := range lifecycleChannel {
+		decisions = append(decisions, decision)
+	}
+	if len(decisions) != len(population.All()) {
+		t.Fatalf("decisions emitted: got %d want %d (one per agent)", len(decisions), len(population.All()))
+	}
+}
+
+// TestStartScheduler_OnDemandEmitsNoCloseEffects: an on-demand session
+// has no churn model and no persisted capital to evolve, so its
+// StartScheduler tail must emit nothing onto the lifecycle channel.
+func TestStartScheduler_OnDemandEmitsNoCloseEffects(t *testing.T) {
+	t.Parallel()
+
+	sched := newTestLiveScheduler(t, stubCoreClient{}, stubRuntimeStore{}, stubMarketDataStore{})
+	population := makeOrderedPopulation(2, 0)
+	lifecycleChannel := make(chan LifecycleDecision, len(population.All()))
+
+	sched.StartScheduler(context.Background(), onDemandBringUpRequest(), population, nil, lifecycleChannel)
+	close(lifecycleChannel)
+
+	decisionCount := 0
+	for range lifecycleChannel {
+		decisionCount++
+	}
+	if decisionCount != 0 {
+		t.Fatalf("on-demand StartScheduler emitted %d decisions, want 0", decisionCount)
+	}
+}
+
 // --- fixtures and fakes
 
 func newTestLiveScheduler(t *testing.T, coreClient CoreClient, runtime RuntimeStore, marketData MarketDataStore) *LiveScheduler {

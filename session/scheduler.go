@@ -71,6 +71,71 @@ func (sched *LiveScheduler) StartScheduler(
 	punchCh := make(chan core.OrderPunchRequest, sched.params.PunchBuffer)
 	go sched.runDispatcher(ctx, request.ExchangeID, punchCh)
 	sched.runLoop(ctx, request, ws, curves, punchCh, lifecycleChannel)
+
+	if request.SessionType == agent.PopulationCanonical {
+		sched.emitCanonicalCloseEffects(ctx, request, ws, lifecycleChannel)
+	}
+	// On-demand sessions have no close-of-session effects to compute or
+	// emit (no churn model, no persisted capital to evolve) — the
+	// lifecycle channel is left untouched here, and the spawn wrapper's
+	// defer close(...) still fires once this function returns.
+}
+
+// emitCanonicalCloseEffects runs the canonical close-of-session quit
+// roll and capital fold and sends every resulting decision on
+// lifecycleChannel. Called only after runLoop above has returned.
+//
+// 🚩 Carried timing gap (not fixed here — see
+// docs/agents/L2_TIER6_TEARDOWN_IMPL.md, the stale-cash-on-fold note):
+// runLoop returns on its own session-end wall-clock check, which can
+// fire a moment before the broker has actually finalized this
+// session's trading cash for every account. On that narrow overlap,
+// readTradingCash below returns a one-session-stale cash figure for
+// an agent, so its carried capital evolves off the wrong number for
+// one session. Accepted for now: the drift lands on a value that
+// evolves across many sessions and self-corrects, and agents are
+// internal-only, so nothing external-facing is wrong. The real fix is
+// to park here until this session's own cancellation arrives (which
+// is guaranteed to follow the broker's finalize) rather than firing
+// off this wall-clock exit — deliberately out of scope for this stage.
+func (sched *LiveScheduler) emitCanonicalCloseEffects(
+	ctx context.Context,
+	request transport.BringUpRequest,
+	ws *workingSet,
+	lifecycleChannel chan<- LifecycleDecision,
+) {
+	agentViews := make([]workingAgentView, 0, len(ws.agents))
+	for agentID, agentRecord := range ws.agents {
+		agentViews = append(agentViews, workingAgentView{
+			AgentID:        agentID,
+			CapitalHandle:  agentRecord.capitalHandle,
+			TradingCapital: agentRecord.tradingCapital,
+		})
+	}
+
+	readTradingCash := func(capitalHandle string) (int64, error) {
+		accountCash, err := sched.core.GetAccountCash(ctx, capitalHandle)
+		if err != nil {
+			sched.logger.Warn("session: GetAccountCash failed at session close, leaving this agent's capital unchanged",
+				"exchange_id", request.ExchangeID,
+				"capital_handle", capitalHandle,
+			)
+			return 0, err
+		}
+		return accountCash.TradingCash, nil
+	}
+
+	decisions := computeCanonicalTeardown(
+		ws.sessionRNG,
+		agentViews,
+		len(agentViews),
+		sched.params.ExpectedQuitsPerSession,
+		sched.params.BrokerDefaultFundedCash,
+		readTradingCash,
+	)
+	for _, teardownDecision := range decisions {
+		lifecycleChannel <- teardownDecision
+	}
 }
 
 // buildWorkingSet constructs the in-memory working set from the bring-up

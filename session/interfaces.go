@@ -23,7 +23,6 @@ import (
 // interface rather than the concrete *core.WebSocketConnection type.
 // That adapter lives in the composition root; this interface is the
 // shape the Runner codes against.
-//
 type CoreClient interface {
 	// JoinCanonical installs an agent's account on a canonical shard
 	// and returns the identifiers tied to that install. Called in
@@ -65,6 +64,14 @@ type CoreClient interface {
 	// later tick. Errors are also ignored — a failed punch is treated
 	// as "status unknown" and reconciled the same way.
 	PunchOrder(ctx context.Context, request core.OrderPunchRequest) error
+
+	// GetAccountCash reads an account's durable, persisted cash figure.
+	// Used only in the canonical close-effects tail, after the broker
+	// has already finalized and unloaded every account for the day —
+	// at that point GetObservation's live read would 409, so this is
+	// the one call in this interface that reads the post-close state
+	// rather than an in-session one.
+	GetAccountCash(ctx context.Context, accountID string) (core.AccountCash, error)
 }
 
 // WSConnection is the connection-handle shape the Runner consumes

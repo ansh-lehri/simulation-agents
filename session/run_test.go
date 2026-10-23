@@ -128,6 +128,10 @@ func (stubCoreClient) PunchOrder(_ context.Context, _ core.OrderPunchRequest) er
 	return nil
 }
 
+func (stubCoreClient) GetAccountCash(_ context.Context, _ string) (core.AccountCash, error) {
+	return core.AccountCash{}, nil
+}
+
 type stubRuntimeStore struct{}
 
 func (stubRuntimeStore) WriteInitialSnapshot(ctx context.Context, exchangeID string, agentRecord agent.Agent) error {

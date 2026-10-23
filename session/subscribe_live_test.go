@@ -273,6 +273,10 @@ func (fake *programmableSubscribeCoreClient) PunchOrder(_ context.Context, _ cor
 	return nil
 }
 
+func (fake *programmableSubscribeCoreClient) GetAccountCash(_ context.Context, _ string) (core.AccountCash, error) {
+	return core.AccountCash{}, nil
+}
+
 // fakeWSConnection is a controllable WSConnection for both
 // subscribe_live and ingest tests. Tests push frames via
 // FeedFrame; Close signals ingest to exit. ReadFrame returns the

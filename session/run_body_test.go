@@ -477,6 +477,10 @@ func (fake *recordingRunCore) PunchOrder(_ context.Context, _ core.OrderPunchReq
 	return nil
 }
 
+func (fake *recordingRunCore) GetAccountCash(_ context.Context, _ string) (core.AccountCash, error) {
+	return core.AccountCash{}, nil
+}
+
 // recordingRunRuntime captures StampEntryTime, SetPresence, and
 // MarkSessionLoadFailed call counts so the Run-body tests can
 // assert the ordering + DORMANT invariant.

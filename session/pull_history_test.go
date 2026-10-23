@@ -534,6 +534,10 @@ func (fake *programmableCoreClientForHistory) GetObservation(_ context.Context, 
 	return core.AccountObservation{}, nil
 }
 
+func (fake *programmableCoreClientForHistory) GetAccountCash(_ context.Context, _ string) (core.AccountCash, error) {
+	return core.AccountCash{}, nil
+}
+
 func (fake *programmableCoreClientForHistory) PunchOrder(_ context.Context, _ core.OrderPunchRequest) error {
 	return nil
 }
@@ -544,10 +548,10 @@ func (fake *programmableCoreClientForHistory) PunchOrder(_ context.Context, _ co
 // exercise WriteCandles; ingest tests exercise AppendCandle and
 // WriteQuote.
 type recordingMarketDataStore struct {
-	callsMutex    sync.Mutex
-	writes        []writeCandlesCall
-	appendCalls   []appendCandleCall
-	quoteWrites   []writeQuoteCall
+	callsMutex  sync.Mutex
+	writes      []writeCandlesCall
+	appendCalls []appendCandleCall
+	quoteWrites []writeQuoteCall
 }
 
 type writeCandlesCall struct {

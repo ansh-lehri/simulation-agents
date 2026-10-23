@@ -396,6 +396,10 @@ func (fake *programmableCoreClient) PunchOrder(_ context.Context, _ core.OrderPu
 	return nil
 }
 
+func (fake *programmableCoreClient) GetAccountCash(_ context.Context, _ string) (core.AccountCash, error) {
+	return core.AccountCash{}, nil
+}
+
 // recordingRuntimeStore captures MarkSessionLoadFailed calls and
 // counts them. All the other RuntimeStore methods delegate to the
 // zero-value stub so this fake does not have to re-implement them.
@@ -432,4 +436,3 @@ func waitUntilAtLeast(counter *atomic.Int32, target int32, maximum time.Duration
 		time.Sleep(2 * time.Millisecond)
 	}
 }
-
