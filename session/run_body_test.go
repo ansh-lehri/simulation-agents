@@ -402,6 +402,25 @@ func (fake *recordingRunCore) JoinCanonical(ctx context.Context, agentUserID, ma
 	return core.CanonicalSessionJoin{SessionID: "sess-" + agentUserID, Status: "active"}, nil
 }
 
+func (fake *recordingRunCore) JoinOnDemand(ctx context.Context, agentUserID, exchangeID string) (core.OnDemandSessionJoin, error) {
+	_ = exchangeID
+	callOrdinal := fake.joinCanonicalCount.Add(1)
+	if fake.beforeJoinCanonical != nil {
+		fake.beforeJoinCanonical()
+	}
+	if fake.failEveryJoinCanonical {
+		return core.OnDemandSessionJoin{}, errors.New("install failed (test)")
+	}
+	if callOrdinal > 1 && fake.installRemainingDelay > 0 {
+		select {
+		case <-time.After(fake.installRemainingDelay):
+		case <-ctx.Done():
+			return core.OnDemandSessionJoin{}, ctx.Err()
+		}
+	}
+	return core.OnDemandSessionJoin{SessionID: "sess-" + agentUserID, Status: "active"}, nil
+}
+
 func (fake *recordingRunCore) GetCandles(ctx context.Context, request core.CandlesRequest) (core.CandlesPage, error) {
 	_ = request
 	fake.getCandlesCount.Add(1)

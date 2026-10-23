@@ -73,6 +73,72 @@ func TestJoinCanonicalSendsExpectedRequestAndDecodesResponse(t *testing.T) {
 	if body.Market != "IN" {
 		t.Fatalf("body market = %q", body.Market)
 	}
+	if body.User.OwnerType != "agent" {
+		t.Fatalf("body owner_type = %q, want %q (this client represents only agents)", body.User.OwnerType, "agent")
+	}
+}
+
+func TestJoinOnDemandSendsExpectedRequestAndDecodesResponse(t *testing.T) {
+	t.Parallel()
+
+	var observedPath atomic.Value
+	var observedBody atomic.Value
+
+	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		observedPath.Store(request.URL.Path)
+
+		var decoded onDemandSessionJoinRequestEnvelope
+		if err := json.NewDecoder(request.Body).Decode(&decoded); err != nil {
+			t.Errorf("server decode: %v", err)
+			responseWriter.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		observedBody.Store(decoded)
+
+		responseWriter.Header().Set("Content-Type", "application/json")
+		_, _ = responseWriter.Write([]byte(`{
+			"session_id":"sess-od-abc",
+			"participant_id":"part-od-xyz",
+			"status":"active"
+		}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client := newTestClient(t, server)
+	join, err := client.JoinOnDemand(context.Background(), "agent-7", "od:exchange-1")
+	if err != nil {
+		t.Fatalf("JoinOnDemand: %v", err)
+	}
+
+	if join.SessionID != "sess-od-abc" || join.ParticipantID != "part-od-xyz" || join.Status != "active" {
+		t.Fatalf("join = %+v", join)
+	}
+	if got := observedPath.Load().(string); got != onDemandSessionJoinEndpointPath {
+		t.Fatalf("path = %q, want %q", got, onDemandSessionJoinEndpointPath)
+	}
+	body := observedBody.Load().(onDemandSessionJoinRequestEnvelope)
+	if body.User.UserID != "agent-7" {
+		t.Fatalf("body user_id = %q", body.User.UserID)
+	}
+	if body.ExchangeID != "od:exchange-1" {
+		t.Fatalf("body exchange_id = %q", body.ExchangeID)
+	}
+}
+
+func TestJoinOnDemandRejectsEmptyIDsWithoutHittingServer(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		t.Error("server should not be hit on empty-id rejection")
+	}))
+	t.Cleanup(server.Close)
+	client := newTestClient(t, server)
+
+	if _, err := client.JoinOnDemand(context.Background(), "", "od:exchange-1"); err == nil {
+		t.Fatal("JoinOnDemand with empty agentUserID: want error, got nil")
+	}
+	if _, err := client.JoinOnDemand(context.Background(), "agent-7", ""); err == nil {
+		t.Fatal("JoinOnDemand with empty exchangeID: want error, got nil")
+	}
 }
 
 func TestJoinCanonicalRejectsEmptyUserIDWithoutHittingServer(t *testing.T) {

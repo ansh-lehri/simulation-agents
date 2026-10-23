@@ -15,14 +15,18 @@ const openAccountEndpointPath = "/v1/account/open"
 // /v1/account/open expects. Email is always sent empty because an
 // agent's identity on the Core side is its user_id string; email is a
 // legacy field required on the wire by the shared account-open contract
-// used by human sign-up.
+// used by human sign-up. owner_type is always "agent" — this client
+// represents only agents; Core defaults an omitted owner_type to
+// "human" for its other (frontend signup/login) caller on this same
+// endpoint.
 type openAccountRequestEnvelope struct {
 	User openAccountRequestUser `json:"user"`
 }
 
 type openAccountRequestUser struct {
-	UserID string `json:"user_id"`
-	Email  string `json:"email"`
+	UserID    string `json:"user_id"`
+	Email     string `json:"email"`
+	OwnerType string `json:"owner_type"`
 }
 
 // openAccountResponseEnvelope is the JSON body shape POST
@@ -53,7 +57,7 @@ func (client *Client) OpenAccount(ctx context.Context, agentUserID string) (stri
 		return "", fmt.Errorf("core: OpenAccount requires a non-empty agent user id")
 	}
 	requestBody := openAccountRequestEnvelope{
-		User: openAccountRequestUser{UserID: agentUserID, Email: ""},
+		User: openAccountRequestUser{UserID: agentUserID, Email: "", OwnerType: "agent"},
 	}
 	var responseBody openAccountResponseEnvelope
 	if err := client.executeIdempotentJSONCall(

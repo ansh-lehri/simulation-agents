@@ -19,10 +19,10 @@ No idempotency keys (except order-cancel). A 504 never means "nothing happened" 
 Versioning is inconsistent: most routes are /v1/…; the /session/* routes are unversioned. Use the literal paths below.
 2. Outbound — the endpoints L2 calls (L2 → Core)
 2.1 POST /v1/account/open — open an agent's account
-Request: { "user": { "user_id": "<agent_id>", "email": "" } }
+Request: { "user": { "user_id": "<agent_id>", "email": "", "owner_type": "agent" } }
 Response 200: { "account_id": "<opaque>" } — only account_id, no funded_cash.
 L2 use: new agents only (2a Stage B). account_id → capital_handle. Idempotent (get-or-create by user_id), so re-sends are safe.
-Corrections vs our Tier‑1/2 assumption: (a) the response does not carry funded_cash — read it from §2.2 instead; (b) the handler hardcodes owner type OwnerHuman. [Core-side note] if an agent owner-type is ever needed (e.g. for on-demand qualify or cost attribution), Core must expose it; for the prototype agents use this endpoint as-is.
+Corrections vs our Tier‑1/2 assumption: (a) the response does not carry funded_cash — read it from §2.2 instead; (b) [superseded] this endpoint used to hardcode owner type OwnerHuman for every caller, including agents — Core now accepts owner_type on the wire ("agent"/"human"), defaulting an omitted field to "human" so the existing human signup/login caller is unaffected; L2 always sends "agent" explicitly.
 Bulk: one call per agent today; a bulk variant is a known future Core addition (L2's payload = a list of {user_id}).
 2.2 GET /v1/account/cash?account_id=<handle> — the funded-cash source
 Response 200: { "trading_cash": <int64>, "bank_cash": <int64> } (durable; 404 if the account doesn't exist).
@@ -30,18 +30,26 @@ L2 use: read trading_cash to get the broker's starting cash per agent → this i
 Note: durable/pre-session read; not live. Fine for bring-up (A is drawn before orders).
 2.3 Session install + session-id — the join endpoints
 
-An agent's account must be installed on its shard before it can order (/v1/orders returns 409 no_session otherwise), and the live feed needs a session id (§2.7). Both come from the same join endpoints humans use:
+An agent's account must be installed on its shard before it can order (/v1/orders returns 409 no_session otherwise), and the live feed needs a session id (§2.7).
 
-Canonical: POST /session/canonical
+Canonical: POST /session/canonical — the same door humans use.
 
-Request: { "user": { "user_id": "<agent_id>" }, "market": "<tag>" }
+Request: { "user": { "user_id": "<agent_id>", "owner_type": "agent" }, "market": "<tag>" }
 Response 200: { "session_id": "<uuid>", "participant_id": "<uuid>", "status": "active" }
+Correction: owner_type is a new field on this request — an omitted value defaults to "human" (the existing frontend caller is unaffected), L2 always sends "agent" explicitly. [superseded] this endpoint used to hardcode owner type OwnerHuman for every caller, including L2's agents.
 
-On-demand: POST /session/ondemand?market=<tag>&duration=<minutes 5–120>
+On-demand — [superseded, corrected]: POST /session/ondemand?market=<tag>&duration=<minutes 5–120> is NOT an endpoint L2 calls. That endpoint spins up a brand-new on-demand session/exchange instance; it is the human-facing trigger, and Core calls L2's own BringUp as part of handling it (Core→L2, not L2→Core). An L2 agent calling it per-agent would incorrectly mint one new on-demand session per agent instead of joining the one the human already created.
 
-Request: { "user": { "user_id": "<agent_id>" } }
-Response 200 (ready): { "status":"warming_up", "session_id", "warmup_ends_at", "session_ends_at" } (RFC3339Nano) — held/synchronous (up to ~90s). Or { "status":"insufficient_funds", … }.
-L2 use: installs the account on the shard and yields a session_id (used for the WS feed) + participant_id. L2 stores session_id only as needed for the feed; participant_id is broker/L7-side.
+The endpoint L2 actually calls for on-demand is a separate, per-agent join door onto the market Core already created:
+
+POST /session/ondemand/join
+
+Request: { "user": { "user_id": "<agent_id>" }, "exchange_id": "<marketID>" } — exchange_id is the same value L2 received on its own BringUp request (AgentBringUpRequest.ExchangeID), carried straight through.
+Response 200: { "session_id": "<uuid>", "participant_id": "<uuid>", "status": "active" }
+No owner_type field — this endpoint's only caller is L2, so Core resolves OwnerAgent unconditionally.
+Errors: 409 if no Live on-demand market exists under exchange_id, or if the agent already holds a live session elsewhere (same per-agent XOR gate as canonical join — shared registry, one slot per agent across both market modes).
+
+L2 use (both doors): installs the account on the shard and yields a session_id (used for the WS feed) + participant_id. L2 stores session_id only as needed for the feed; participant_id is broker/L7-side.
 Note: participant_id is injected broker-side at order time — L2 identifies an agent on orders by account_id (= capital_handle), not participant_id.
 2.4 POST /v1/orders — place order (fire-and-forget)
 Request: { "account_id", "instrument", "side": "buy"|"sell", "type": "limit"|"market", "tif": "gtc"|"ioc", "qty": <int64>, "limit_price": <int64> }
@@ -80,7 +88,7 @@ HTTP (request/response):
   OpenAccount(user_id)                 → account_id                         [2.1]
   GetAccountCash(account_id)           → {trading_cash, bank_cash}          [2.2]
   JoinCanonical(user_id, market)       → {session_id, participant_id}       [2.3]
-  StartOnDemand(user_id, market, dur)  → {session_id, warmup/session_ends}  [2.3]
+  JoinOnDemand(user_id, exchange_id)   → {session_id, participant_id}       [2.3]
   PunchOrder(order)                    → (ignored; fire-and-forget)         [2.4]
   GetObservation(account_id)           → {balance, positions, orders, …}    [2.5]
   GetCandles(market, instrument, tf, from, to, cursor, limit) → candles     [2.6]

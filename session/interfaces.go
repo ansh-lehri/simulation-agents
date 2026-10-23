@@ -24,16 +24,18 @@ import (
 // That adapter lives in the composition root; this interface is the
 // shape the Runner codes against.
 //
-// The on-demand session-install method (StartOnDemand on the real
-// client) is added to this interface in the stage that implements the
-// per-agent session-install op — Core does not yet expose that method
-// at the time this interface is drafted. The canonical path uses
-// JoinCanonical, which already exists.
 type CoreClient interface {
 	// JoinCanonical installs an agent's account on a canonical shard
 	// and returns the identifiers tied to that install. Called in
 	// the per-agent session-install op during a canonical bring-up.
 	JoinCanonical(ctx context.Context, agentUserID, marketTag string) (core.CanonicalSessionJoin, error)
+
+	// JoinOnDemand installs an agent's account on the one already-live
+	// on-demand market identified by exchangeID — the market a
+	// human's StartOnDemand call already created. Called in the
+	// per-agent session-install op during an on-demand bring-up;
+	// never spins up a new on-demand session itself.
+	JoinOnDemand(ctx context.Context, agentUserID, exchangeID string) (core.OnDemandSessionJoin, error)
 
 	// GetCandles reads one page of candle history and is driven in a
 	// paged loop by the history-pull op until the response's

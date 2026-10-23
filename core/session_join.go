@@ -36,14 +36,17 @@ type CanonicalSessionJoin struct {
 }
 
 // canonicalSessionJoinRequestEnvelope is the JSON body shape POST
-// /session/canonical expects.
+// /session/canonical expects. owner_type is always "agent" — this
+// client represents only agents; Core defaults an omitted owner_type
+// to "human" for its other (frontend) caller on this same endpoint.
 type canonicalSessionJoinRequestEnvelope struct {
 	User   canonicalSessionJoinRequestUser `json:"user"`
 	Market string                          `json:"market"`
 }
 
 type canonicalSessionJoinRequestUser struct {
-	UserID string `json:"user_id"`
+	UserID    string `json:"user_id"`
+	OwnerType string `json:"owner_type"`
 }
 
 // JoinCanonical installs an agent's account on the shard serving a
@@ -69,7 +72,7 @@ func (client *Client) JoinCanonical(ctx context.Context, agentUserID, marketTag 
 		return CanonicalSessionJoin{}, fmt.Errorf("core: JoinCanonical requires a non-empty market tag")
 	}
 	requestBody := canonicalSessionJoinRequestEnvelope{
-		User:   canonicalSessionJoinRequestUser{UserID: agentUserID},
+		User:   canonicalSessionJoinRequestUser{UserID: agentUserID, OwnerType: "agent"},
 		Market: marketTag,
 	}
 	var responseBody CanonicalSessionJoin
@@ -82,6 +85,70 @@ func (client *Client) JoinCanonical(ctx context.Context, agentUserID, marketTag 
 		&responseBody,
 	); err != nil {
 		return CanonicalSessionJoin{}, err
+	}
+	return responseBody, nil
+}
+
+// onDemandSessionJoinEndpointPath is the literal Core path for a
+// per-agent on-demand-session join. Distinct from the on-demand
+// session-creation endpoint (POST /session/ondemand) — that one spins
+// up a brand-new session; this one attaches one more participant to a
+// session that already exists, identified by exact exchange id.
+const onDemandSessionJoinEndpointPath = "/session/ondemand/join"
+
+// OnDemandSessionJoin is the response body returned when an agent's
+// account is successfully installed on the shard for an on-demand
+// market session. Same shape as CanonicalSessionJoin; kept as its own
+// type so the two install paths stay independently evolvable.
+type OnDemandSessionJoin struct {
+	SessionID     string `json:"session_id"`
+	ParticipantID string `json:"participant_id"`
+	Status        string `json:"status"`
+}
+
+// onDemandSessionJoinRequestEnvelope is the JSON body shape POST
+// /session/ondemand/join expects. No owner_type field — this client
+// is the endpoint's only caller, so Core resolves OwnerAgent itself.
+type onDemandSessionJoinRequestEnvelope struct {
+	User       onDemandSessionJoinRequestUser `json:"user"`
+	ExchangeID string                         `json:"exchange_id"`
+}
+
+type onDemandSessionJoinRequestUser struct {
+	UserID string `json:"user_id"`
+}
+
+// JoinOnDemand installs an agent's account on the shard serving an
+// already-live on-demand market session and returns the identifiers
+// tied to that install. exchangeID identifies the one on-demand market
+// instance a human's StartOnDemand call already created — this call
+// never creates a session itself.
+//
+// Same write/no-retry and pre-open timeout classification as
+// JoinCanonical: a slow success is indistinguishable from a timed-out
+// failure, so a transient failure is reconciled by a fresh state read,
+// never a blind retry.
+func (client *Client) JoinOnDemand(ctx context.Context, agentUserID, exchangeID string) (OnDemandSessionJoin, error) {
+	if agentUserID == "" {
+		return OnDemandSessionJoin{}, fmt.Errorf("core: JoinOnDemand requires a non-empty agent user id")
+	}
+	if exchangeID == "" {
+		return OnDemandSessionJoin{}, fmt.Errorf("core: JoinOnDemand requires a non-empty exchange id")
+	}
+	requestBody := onDemandSessionJoinRequestEnvelope{
+		User:       onDemandSessionJoinRequestUser{UserID: agentUserID},
+		ExchangeID: exchangeID,
+	}
+	var responseBody OnDemandSessionJoin
+	if err := client.executeJSONCall(
+		ctx,
+		preOpenCall,
+		http.MethodPost,
+		onDemandSessionJoinEndpointPath,
+		requestBody,
+		&responseBody,
+	); err != nil {
+		return OnDemandSessionJoin{}, err
 	}
 	return responseBody, nil
 }

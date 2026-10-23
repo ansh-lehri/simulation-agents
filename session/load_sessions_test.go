@@ -48,6 +48,34 @@ func TestLoadSessionsHappyCanonical(t *testing.T) {
 	}
 }
 
+// TestLoadSessionsHappyOnDemand: an on-demand bring-up dispatches every
+// install through JoinOnDemand (keyed by the request's ExchangeID), not
+// JoinCanonical — the per-agent join must attach to the one already-live
+// on-demand market, never spin up a new one.
+func TestLoadSessionsHappyOnDemand(t *testing.T) {
+	t.Parallel()
+
+	fakeCore := newProgrammableCoreClient()
+	fakeRuntime := newRecordingRuntimeStore()
+	runner := loadSessionsTestRunner(t, fakeCore, fakeRuntime)
+	population := makeOrderedPopulation(2, 3)
+
+	feedSessionID, err := runner.loadSessions(context.Background(), onDemandBringUpRequest(), population)
+	if err != nil {
+		t.Fatalf("loadSessions: %v", err)
+	}
+	if feedSessionID != "sess-"+string(population.Existing[0].ID) {
+		t.Fatalf("feed session id = %q, want lowest-indexed agent's session id %q",
+			feedSessionID, "sess-"+string(population.Existing[0].ID))
+	}
+	if calls := fakeCore.joinOnDemandCount.Load(); int(calls) != len(population.All()) {
+		t.Fatalf("JoinOnDemand called %d times, want %d", calls, len(population.All()))
+	}
+	if calls := fakeCore.joinCanonicalCount.Load(); calls != 0 {
+		t.Fatalf("JoinCanonical called %d times, want 0 (on-demand must never use the canonical door)", calls)
+	}
+}
+
 // TestLoadSessionsPartialFailureProceeds: a mix of successful and
 // failing installs. The failing agents are marked via Redis, the
 // successful ones install, the feed id is still the lowest-indexed
@@ -264,6 +292,17 @@ func canonicalBringUpRequest() transport.BringUpRequest {
 	}
 }
 
+func onDemandBringUpRequest() transport.BringUpRequest {
+	return transport.BringUpRequest{
+		ExchangeID:   "od:exch_1",
+		SessionType:  agent.PopulationOnDemand,
+		Country:      "IN",
+		SessionStart: time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC),
+		SessionEnd:   time.Date(2026, 10, 20, 10, 30, 0, 0, time.UTC),
+		Instruments:  []string{"stock1"},
+	}
+}
+
 func makeOrderedPopulation(existingCount, newCount int) generator.Population {
 	population := generator.Population{}
 	for existingIndex := 0; existingIndex < existingCount; existingIndex++ {
@@ -293,6 +332,7 @@ type programmableCoreClient struct {
 	beforeJoinCanonical func()
 
 	joinCanonicalCount atomic.Int32
+	joinOnDemandCount  atomic.Int32
 }
 
 func newProgrammableCoreClient() *programmableCoreClient {
@@ -316,6 +356,19 @@ func (fake *programmableCoreClient) JoinCanonical(ctx context.Context, agentUser
 		return response, nil
 	}
 	return core.CanonicalSessionJoin{SessionID: "sess-" + agentUserID, Status: "active"}, nil
+}
+
+func (fake *programmableCoreClient) JoinOnDemand(ctx context.Context, agentUserID, exchangeID string) (core.OnDemandSessionJoin, error) {
+	_ = ctx
+	_ = exchangeID
+	fake.joinOnDemandCount.Add(1)
+	if err, programmed := fake.canonicalError[agentUserID]; programmed {
+		return core.OnDemandSessionJoin{}, err
+	}
+	if response, programmed := fake.canonicalResponse[agentUserID]; programmed {
+		return core.OnDemandSessionJoin{SessionID: response.SessionID, ParticipantID: response.ParticipantID, Status: response.Status}, nil
+	}
+	return core.OnDemandSessionJoin{SessionID: "sess-" + agentUserID, Status: "active"}, nil
 }
 
 func (fake *programmableCoreClient) GetCandles(ctx context.Context, request core.CandlesRequest) (core.CandlesPage, error) {

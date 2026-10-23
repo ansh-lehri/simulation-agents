@@ -70,6 +70,9 @@ func TestOpenAccountSendsExpectedRequestAndDecodesAccountID(t *testing.T) {
 	if body.User.Email != "" {
 		t.Fatalf("body email = %q, want empty string per contract", body.User.Email)
 	}
+	if body.User.OwnerType != "agent" {
+		t.Fatalf("body owner_type = %q, want %q (this client represents only agents)", body.User.OwnerType, "agent")
+	}
 }
 
 func TestOpenAccountRejectsEmptyUserIDWithoutHittingServer(t *testing.T) {

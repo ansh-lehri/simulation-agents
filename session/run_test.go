@@ -96,6 +96,13 @@ func (stubCoreClient) JoinCanonical(ctx context.Context, agentUserID, marketTag 
 	return core.CanonicalSessionJoin{}, nil
 }
 
+func (stubCoreClient) JoinOnDemand(ctx context.Context, agentUserID, exchangeID string) (core.OnDemandSessionJoin, error) {
+	_ = ctx
+	_ = agentUserID
+	_ = exchangeID
+	return core.OnDemandSessionJoin{}, nil
+}
+
 func (stubCoreClient) GetCandles(ctx context.Context, request core.CandlesRequest) (core.CandlesPage, error) {
 	_ = ctx
 	_ = request

@@ -252,6 +252,13 @@ func (fake *programmableSubscribeCoreClient) JoinCanonical(ctx context.Context, 
 	return core.CanonicalSessionJoin{}, nil
 }
 
+func (fake *programmableSubscribeCoreClient) JoinOnDemand(ctx context.Context, agentUserID, exchangeID string) (core.OnDemandSessionJoin, error) {
+	_ = ctx
+	_ = agentUserID
+	_ = exchangeID
+	return core.OnDemandSessionJoin{}, nil
+}
+
 func (fake *programmableSubscribeCoreClient) GetCandles(ctx context.Context, request core.CandlesRequest) (core.CandlesPage, error) {
 	_ = ctx
 	_ = request

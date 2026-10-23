@@ -48,6 +48,13 @@ func (adapter *sessionCoreClientAdapter) JoinCanonical(
 	return adapter.inner.JoinCanonical(ctx, agentUserID, marketTag)
 }
 
+func (adapter *sessionCoreClientAdapter) JoinOnDemand(
+	ctx context.Context,
+	agentUserID, exchangeID string,
+) (core.OnDemandSessionJoin, error) {
+	return adapter.inner.JoinOnDemand(ctx, agentUserID, exchangeID)
+}
+
 func (adapter *sessionCoreClientAdapter) GetCandles(
 	ctx context.Context,
 	request core.CandlesRequest,

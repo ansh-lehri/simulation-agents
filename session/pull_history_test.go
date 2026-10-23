@@ -516,6 +516,13 @@ func (fake *programmableCoreClientForHistory) JoinCanonical(ctx context.Context,
 	return core.CanonicalSessionJoin{}, nil
 }
 
+func (fake *programmableCoreClientForHistory) JoinOnDemand(ctx context.Context, agentUserID, exchangeID string) (core.OnDemandSessionJoin, error) {
+	_ = ctx
+	_ = agentUserID
+	_ = exchangeID
+	return core.OnDemandSessionJoin{}, nil
+}
+
 func (fake *programmableCoreClientForHistory) Subscribe(ctx context.Context, sessionID string, subscriptions []core.MarketDataSubscription) (WSConnection, core.ConnectedFrame, error) {
 	_ = ctx
 	_ = sessionID

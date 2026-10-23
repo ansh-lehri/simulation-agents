@@ -72,13 +72,12 @@ func (runner *Runner) installFeedAgent(
 	if len(allAgents) == 0 {
 		return "", -1, nil, fmt.Errorf("session: installFeedAgent received an empty population")
 	}
-	marketTag := request.Country
 	firstPassErrors := make(map[agent.AgentID]error)
 	for agentIndex, agentRecord := range allAgents {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return "", -1, firstPassErrors, fmt.Errorf("session: installFeedAgent aborted: %w", ctxErr)
 		}
-		sessionID, installErr := runner.installOneAgent(ctx, request.SessionType, string(agentRecord.ID), marketTag)
+		sessionID, installErr := runner.installOneAgent(ctx, request, string(agentRecord.ID))
 		if installErr != nil {
 			firstPassErrors[agentRecord.ID] = installErr
 			runner.dependencies.Logger.Info(
@@ -163,7 +162,6 @@ func (runner *Runner) installRemainingAgents(
 		return nil
 	}
 
-	marketTag := request.Country
 	concurrencyLimit := runner.dependencies.Params.LoadSessionsConcurrency
 	if concurrencyLimit <= 0 {
 		concurrencyLimit = 1
@@ -182,12 +180,7 @@ func (runner *Runner) installRemainingAgents(
 			defer fanOutWaitGroup.Done()
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
-			sessionID, installErr := runner.installOneAgent(
-				ctx,
-				request.SessionType,
-				string(agentRecord.ID),
-				marketTag,
-			)
+			sessionID, installErr := runner.installOneAgent(ctx, request, string(agentRecord.ID))
 			resultsByAgentID.Store(agentRecord.ID, installResult{
 				sessionID:    sessionID,
 				installError: installErr,
@@ -257,21 +250,19 @@ type installResult struct {
 
 // installOneAgent dispatches on session type and translates the Core
 // response into a plain (session id, error) pair the fan-out
-// collector can bucketise. Only the canonical branch is live in
-// this stage; the on-demand branch is deferred — the on-demand join
-// endpoint on the Core client is not part of this stage's scope,
-// so a bring-up with SessionType=ondemand returns a clear error
-// per agent and the whole op then surfaces its "total failure"
-// fatal to the caller.
+// collector can bucketise. Canonical installs join by market tag
+// (request.Country); on-demand installs join the one already-live
+// on-demand market by its exact exchange id (request.ExchangeID) —
+// the market a human's StartOnDemand call already created, which L2
+// must attach to rather than spin up a new one.
 func (runner *Runner) installOneAgent(
 	ctx context.Context,
-	sessionType string,
+	request transport.BringUpRequest,
 	agentUserID string,
-	marketTag string,
 ) (string, error) {
-	switch sessionType {
+	switch request.SessionType {
 	case agent.PopulationCanonical:
-		join, joinErr := runner.dependencies.Core.JoinCanonical(ctx, agentUserID, marketTag)
+		join, joinErr := runner.dependencies.Core.JoinCanonical(ctx, agentUserID, request.Country)
 		if joinErr != nil {
 			return "", joinErr
 		}
@@ -280,8 +271,15 @@ func (runner *Runner) installOneAgent(
 		}
 		return join.SessionID, nil
 	case agent.PopulationOnDemand:
-		return "", fmt.Errorf("session: on-demand session install is not implemented in this stage")
+		join, joinErr := runner.dependencies.Core.JoinOnDemand(ctx, agentUserID, request.ExchangeID)
+		if joinErr != nil {
+			return "", joinErr
+		}
+		if join.SessionID == "" {
+			return "", fmt.Errorf("session: on-demand install returned empty session_id")
+		}
+		return join.SessionID, nil
 	default:
-		return "", fmt.Errorf("session: installOneAgent received unknown session type %q", sessionType)
+		return "", fmt.Errorf("session: installOneAgent received unknown session type %q", request.SessionType)
 	}
 }
