@@ -15,7 +15,13 @@ import (
 // placeholders — a tuning run moves the dials, this constructor
 // does not pin them in code. The entry-curve defaults come from
 // the session package's own baseline so the two stay in sync.
-func defaultSessionParams() session.Params {
+//
+// brokerDefaultFundedCash is threaded in by the caller rather than
+// pinned here so there is exactly one source for this number in the
+// composition root — defaultOrchestratorConfig's CapitalParams.
+// DefaultFundedCash — instead of two independently-maintained copies
+// of the same constant.
+func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 	return session.Params{
 		EntryCurve:              session.DefaultEntryCurveParams(),
 		HistoryLookback:         60 * time.Minute,
@@ -27,6 +33,12 @@ func defaultSessionParams() session.Params {
 		MaxLookbackK:            120,
 		Perception:              session.DefaultPerceptionParams(),
 		Decision:                defaultDecisionParams(),
+		// ExpectedQuitsPerSession is the canonical quit-for-good
+		// baseline from the lifecycle design (~one quitter every
+		// 3-4 sessions) — a calibration placeholder like every
+		// other number in this file, not a fitted value.
+		ExpectedQuitsPerSession: 0.3,
+		BrokerDefaultFundedCash: brokerDefaultFundedCash,
 	}
 }
 
@@ -89,6 +101,13 @@ func (adapter *sessionCoreClientAdapter) PunchOrder(
 	request core.OrderPunchRequest,
 ) error {
 	return adapter.inner.PunchOrder(ctx, request)
+}
+
+func (adapter *sessionCoreClientAdapter) GetAccountCash(
+	ctx context.Context,
+	accountID string,
+) (core.AccountCash, error) {
+	return adapter.inner.GetAccountCash(ctx, accountID)
 }
 
 // orchestratorFailureReporterAdapter closes the dependency loop

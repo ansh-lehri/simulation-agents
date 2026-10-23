@@ -185,7 +185,7 @@ func run(logger *slog.Logger) error {
 		Failure:    orchestratorFailureAdapter,
 		Clock:      session.NewRealClock(),
 		RNGSource:  orchestrator.NewFreshEntropySource(),
-		Params:     defaultSessionParams(),
+		Params:     defaultSessionParams(orchestratorConfig.CapitalParams.DefaultFundedCash),
 		Logger:     logger,
 	})
 	if err != nil {
