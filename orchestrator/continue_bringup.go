@@ -90,10 +90,30 @@ func (orchestrator *Orchestrator) continueBringUp(
 		"exchange_id", request.ExchangeID,
 		"session_type", request.SessionType,
 	)
-	// Detach the runner from the request ctx: the inbound handler
-	// may have long since returned, but the session is only just
-	// going live.
-	go orchestrator.sessionRunner.Run(context.Background(), request, population, curveEffective, lifecycleChannel)
+	// The session gets its own cancellable context, detached from the
+	// request ctx (the inbound handler may have long since returned,
+	// but the session is only just going live) and independent of
+	// every other session's context — WindDown cancels exactly this
+	// one session without touching any other in-flight work.
+	sessionCtx, cancelSession := context.WithCancel(context.Background())
+	// Registered BEFORE the spawn below: a WindDown racing in right
+	// after the goroutine starts must always find a handle to cancel,
+	// never an empty registry.
+	orchestrator.registerHandle(request.ExchangeID, &sessionHandle{
+		sessionType: request.SessionType,
+		country:     request.Country,
+		population:  population,
+		cancel:      cancelSession,
+		lifecycleCh: lifecycleChannel,
+	})
+	go func() {
+		// This defer is the exit barrier WindDown's drain waits on —
+		// it must fire only once Run has fully returned, so the
+		// orchestrator never starts draining while the goroutine might
+		// still be sending on lifecycleChannel.
+		defer close(lifecycleChannel)
+		orchestrator.sessionRunner.Run(sessionCtx, request, population, curveEffective, lifecycleChannel)
+	}()
 }
 
 // persistNewAgents inserts each freshly minted agent's durable row

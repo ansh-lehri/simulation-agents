@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"sync"
 
 	"simulation-agents/orchestrator/generator"
 	"simulation-agents/session"
@@ -44,10 +45,10 @@ type PopulationGenerator interface {
 // persists, snapshots, enlists, registers, and spawns the per-
 // exchange run goroutine.
 type Orchestrator struct {
-	generator      PopulationGenerator
-	accountOpen    *AccountOpenClient
-	capital        *CapitalResolver
-	rngSource      RNGSource
+	generator   PopulationGenerator
+	accountOpen *AccountOpenClient
+	capital     *CapitalResolver
+	rngSource   RNGSource
 
 	// Persistence surfaces the bring-up tail (continueBringUp)
 	// writes to. Each is a narrow store interface so a composition
@@ -82,6 +83,15 @@ type Orchestrator struct {
 	config         OrchestratorConfig
 	logger         *slog.Logger
 	validScenarios map[string]struct{}
+
+	// sessions is the registry of live per-exchange sessions, keyed
+	// by exchange id. continueBringUp registers a handle right before
+	// spawning the per-exchange goroutine; WindDown looks one up (and
+	// removes it) to stop that goroutine and drain its close-of-session
+	// writes. sessionsMu guards both the map and the lookup-and-delete
+	// that makes a second WindDown for the same exchange a clean no-op.
+	sessions   map[string]*sessionHandle
+	sessionsMu sync.Mutex
 }
 
 // NewOrchestrator wires an Orchestrator from its dependencies and
@@ -161,6 +171,7 @@ func NewOrchestrator(
 		config:             config,
 		logger:             logger,
 		validScenarios:     validScenarios,
+		sessions:           make(map[string]*sessionHandle),
 	}
 	// Self-reference: the orchestrator's own FailBringUp and
 	// ReportReady methods satisfy session.FailureReporter. Routing
@@ -301,20 +312,6 @@ func (orchestrator *Orchestrator) runBringUpSpine(
 	orchestrator.capital.Resolve(&population, request.SessionType, rng)
 
 	return population, nil
-}
-
-// WindDown is the inbound teardown seam, matching
-// transport.AgentOrchestrator. The real teardown path (lease release,
-// WAL drain of orphan mints, snapshot drop, deregister session, close
-// WS) is a later phase; this stub acknowledges and returns.
-func (orchestrator *Orchestrator) WindDown(ctx context.Context, exchangeID string, teardownMode string) error {
-	_ = ctx
-	orchestrator.logger.Info(
-		"wind-down accepted",
-		"exchange_id", exchangeID,
-		"teardown_mode", teardownMode,
-	)
-	return nil
 }
 
 // Compile-time witness: the real generator satisfies the orchestrator's
