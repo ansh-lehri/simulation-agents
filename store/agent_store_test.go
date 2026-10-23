@@ -275,6 +275,45 @@ func TestRetire_SetsRetiredAtAndRemovesFromLiveMembers(t *testing.T) {
 	})
 }
 
+// UpdateTradingCapital overwrites the persisted column on an existing
+// row — the session-end evolution write InsertAgent cannot perform.
+func TestUpdateTradingCapital_OverwritesExistingRow(t *testing.T) {
+	withTx(t, func(ctx context.Context, tx pgx.Tx) {
+		agentStore := store.NewPostgresAgentStore(tx)
+		rec := makeAgent("a-fold", "US", agent.PopulationCanonical)
+		rec.TradingCapital = 50_000
+		if err := agentStore.InsertAgent(ctx, rec); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+
+		if err := agentStore.UpdateTradingCapital(ctx, "a-fold", 73_250); err != nil {
+			t.Fatalf("UpdateTradingCapital: %v", err)
+		}
+
+		loaded, err := agentStore.LoadMany(ctx, []agent.AgentID{"a-fold"})
+		if err != nil {
+			t.Fatalf("LoadMany: %v", err)
+		}
+		if len(loaded) != 1 {
+			t.Fatalf("loaded count: got %d want 1", len(loaded))
+		}
+		if loaded[0].TradingCapital != 73_250 {
+			t.Errorf("trading_capital after update: got %d want %d", loaded[0].TradingCapital, 73_250)
+		}
+	})
+}
+
+// UpdateTradingCapital against a non-existent row is a silent no-op,
+// matching Retire's documented behavior for the same case.
+func TestUpdateTradingCapital_NoMatchingRowIsSilentNoOp(t *testing.T) {
+	withTx(t, func(ctx context.Context, tx pgx.Tx) {
+		agentStore := store.NewPostgresAgentStore(tx)
+		if err := agentStore.UpdateTradingCapital(ctx, "a-missing", 1_000); err != nil {
+			t.Fatalf("UpdateTradingCapital on missing row: %v", err)
+		}
+	})
+}
+
 // Traits serialize and deserialize whole through the JSONB column, with
 // the kind-gated blocks preserving their presence/absence pattern.
 func TestInsertAgent_TraitsJSONBRoundTrip(t *testing.T) {

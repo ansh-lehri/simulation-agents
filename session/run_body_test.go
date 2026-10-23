@@ -564,6 +564,9 @@ func (fake *recordingRunRuntime) SetTipFollowState(_ context.Context, _ string, 
 func (fake *recordingRunRuntime) SetPerceptionRefs(_ context.Context, _ string, _ agent.AgentID, _ string, _ store.PerceptionRefs) error {
 	return nil
 }
+func (fake *recordingRunRuntime) DropSession(_ context.Context, _ string) error {
+	return nil
+}
 
 // Compile-time witness: the recording store satisfies both the
 // base store surface and session's narrow extension.

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/redis/go-redis/v9"
@@ -13,11 +14,10 @@ import (
 // pool itself (membership) lives durably in Postgres; this type owns
 // only the fast, transient availability state in Redis.
 //
-// SelectAvailable and Enlist are LIVE in this phase; Release and
-// Reconcile are declared on the interface so the composition root
-// compiles against the full contract today, but their execution lives
-// in the crash-recovery / teardown phase and currently returns the
-// package-level ErrNotImplementedThisPhase.
+// SelectAvailable, Enlist, and Release are LIVE. Reconcile is declared
+// on the interface so the composition root compiles against the full
+// contract today, but its execution lives in the crash-recovery phase
+// and currently returns the package-level ErrNotImplementedThisPhase.
 type LeaseAllocator interface {
 	// SelectAvailable atomically pops `count` free agent ids from the
 	// per-country available-set and marks each as leased to the given
@@ -34,8 +34,14 @@ type LeaseAllocator interface {
 	// Release returns a session's agents to the available-set after the
 	// broker has discarded the session. The ordering constraint
 	// (session_discard → release, never the other way round) is the
-	// caller's responsibility. Execution deferred to the teardown
-	// phase.
+	// caller's responsibility.
+	//
+	// Processes every agent id even if an earlier one's write fails —
+	// a transient Redis error on one id must not strand the rest of
+	// the batch in the leased set, since a later restart-time
+	// reconcile pass is the only other path back to available.
+	// Returns a combined error listing every id that failed either
+	// half of its release; nil only if every id fully released.
 	Release(ctx context.Context, country string, agentIDs []agent.AgentID) error
 
 	// Reconcile rebuilds the per-country available-set from the durable
@@ -98,10 +104,24 @@ func (leaseAllocator *RedisLeaseAllocator) Enlist(ctx context.Context, country s
 	return nil
 }
 
-// Release stub — execution lives in the teardown phase.
 func (leaseAllocator *RedisLeaseAllocator) Release(ctx context.Context, country string, agentIDs []agent.AgentID) error {
-	_, _, _ = ctx, country, agentIDs
-	return ErrNotImplementedThisPhase
+	leasedKey := LeaseLeasedKey(country)
+	availableKey := LeaseAvailableKey(country)
+
+	var releaseErrors []error
+	for _, agentID := range agentIDs {
+		if err := leaseAllocator.client.HDel(ctx, leasedKey, string(agentID)).Err(); err != nil {
+			releaseErrors = append(releaseErrors, fmt.Errorf("HDEL leased for %s: %w", agentID, err))
+		}
+		if err := leaseAllocator.client.SAdd(ctx, availableKey, string(agentID)).Err(); err != nil {
+			releaseErrors = append(releaseErrors, fmt.Errorf("SADD available for %s: %w", agentID, err))
+		}
+	}
+	if len(releaseErrors) > 0 {
+		return fmt.Errorf("store: release %d error(s) across %d agent(s) in %s: %w",
+			len(releaseErrors), len(agentIDs), country, errors.Join(releaseErrors...))
+	}
+	return nil
 }
 
 // Reconcile stub — execution lives in the teardown / restart phase.

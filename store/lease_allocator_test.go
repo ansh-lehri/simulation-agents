@@ -185,23 +185,91 @@ func TestEnlist_WritesLeasedEntry(t *testing.T) {
 	}
 }
 
-// Release and Reconcile are declared on the interface for forward
-// compatibility but their execution lives in a later phase. Calling
-// them must return the sentinel error so a caller cannot mistake a
-// stub for a working impl.
-func TestReleaseAndReconcile_ReturnStubSentinel(t *testing.T) {
+// Reconcile is declared on the interface for forward compatibility but
+// its execution lives in the crash-recovery phase. Calling it must
+// return the sentinel error so a caller cannot mistake a stub for a
+// working impl.
+func TestReconcile_ReturnsStubSentinel(t *testing.T) {
 	client := openTestRedis(t)
 	ctx := context.Background()
 	leaseAllocator := store.NewRedisLeaseAllocator(client)
 
-	releaseErr := leaseAllocator.Release(ctx, "US", []agent.AgentID{"a-1"})
-	if !errors.Is(releaseErr, store.ErrNotImplementedThisPhase) {
-		t.Errorf("Release err: got %v want ErrNotImplementedThisPhase", releaseErr)
-	}
-
 	reconcileErr := leaseAllocator.Reconcile(ctx, "US", map[string]bool{"ex-1": true}, []agent.AgentID{"a-1"})
 	if !errors.Is(reconcileErr, store.ErrNotImplementedThisPhase) {
 		t.Errorf("Reconcile err: got %v want ErrNotImplementedThisPhase", reconcileErr)
+	}
+}
+
+// Release clears each agent's busy mark and returns it to the
+// available set — the mirror image of SelectAvailable's pop+mark.
+func TestRelease_ClearsLeasedAndRestoresAvailable(t *testing.T) {
+	client := openTestRedis(t)
+	ctx := context.Background()
+	leaseAllocator := store.NewRedisLeaseAllocator(client)
+
+	if err := leaseAllocator.Enlist(ctx, "US", "a-1", "ex-1"); err != nil {
+		t.Fatalf("Enlist a-1: %v", err)
+	}
+	if err := leaseAllocator.Enlist(ctx, "US", "a-2", "ex-1"); err != nil {
+		t.Fatalf("Enlist a-2: %v", err)
+	}
+
+	if err := leaseAllocator.Release(ctx, "US", []agent.AgentID{"a-1", "a-2"}); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	for _, agentID := range []string{"a-1", "a-2"} {
+		exists, err := client.HExists(ctx, store.LeaseLeasedKey("US"), agentID).Result()
+		if err != nil {
+			t.Fatalf("HExists leased %s: %v", agentID, err)
+		}
+		if exists {
+			t.Errorf("agent %s still present in leased hash after Release", agentID)
+		}
+		isMember, err := client.SIsMember(ctx, store.LeaseAvailableKey("US"), agentID).Result()
+		if err != nil {
+			t.Fatalf("SIsMember available %s: %v", agentID, err)
+		}
+		if !isMember {
+			t.Errorf("agent %s not returned to available set after Release", agentID)
+		}
+	}
+}
+
+// Release processes every agent id in the batch, independent of each
+// other — releasing a batch with one never-leased id (a no-op HDEL)
+// alongside a genuinely leased one must still free the genuinely
+// leased one, not abort the whole batch.
+func TestRelease_ProcessesEveryAgentIDIndependently(t *testing.T) {
+	client := openTestRedis(t)
+	ctx := context.Background()
+	leaseAllocator := store.NewRedisLeaseAllocator(client)
+
+	if err := leaseAllocator.Enlist(ctx, "US", "a-leased", "ex-1"); err != nil {
+		t.Fatalf("Enlist: %v", err)
+	}
+
+	// "a-never-leased" was never in the leased hash — its HDEL is a
+	// harmless no-op, but it must still be returned to available.
+	if err := leaseAllocator.Release(ctx, "US", []agent.AgentID{"a-never-leased", "a-leased"}); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+
+	for _, agentID := range []string{"a-never-leased", "a-leased"} {
+		isMember, err := client.SIsMember(ctx, store.LeaseAvailableKey("US"), agentID).Result()
+		if err != nil {
+			t.Fatalf("SIsMember available %s: %v", agentID, err)
+		}
+		if !isMember {
+			t.Errorf("agent %s not returned to available set after Release", agentID)
+		}
+	}
+	stillLeased, err := client.HExists(ctx, store.LeaseLeasedKey("US"), "a-leased").Result()
+	if err != nil {
+		t.Fatalf("HExists leased a-leased: %v", err)
+	}
+	if stillLeased {
+		t.Error("a-leased still present in leased hash after Release")
 	}
 }
 

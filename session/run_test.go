@@ -201,6 +201,9 @@ func (stubRuntimeStore) SetTipFollowState(_ context.Context, _ string, _ agent.A
 func (stubRuntimeStore) SetPerceptionRefs(_ context.Context, _ string, _ agent.AgentID, _ string, _ store.PerceptionRefs) error {
 	return nil
 }
+func (stubRuntimeStore) DropSession(_ context.Context, _ string) error {
+	return nil
+}
 
 type stubMarketDataStore struct{}
 

@@ -46,6 +46,10 @@ func (nopAgentStore) Retire(ctx context.Context, agentID agent.AgentID, retiredA
 	_, _, _ = ctx, agentID, retiredAt
 	return nil
 }
+func (nopAgentStore) UpdateTradingCapital(ctx context.Context, agentID agent.AgentID, value int64) error {
+	_, _, _ = ctx, agentID, value
+	return nil
+}
 
 type nopRuntimeStore struct{}
 
@@ -93,6 +97,9 @@ func (nopRuntimeStore) SetTipFollowState(_ context.Context, _ string, _ agent.Ag
 func (nopRuntimeStore) SetPerceptionRefs(_ context.Context, _ string, _ agent.AgentID, _ string, _ store.PerceptionRefs) error {
 	return nil
 }
+func (nopRuntimeStore) DropSession(_ context.Context, _ string) error {
+	return nil
+}
 
 type nopLeaseAllocator struct{}
 
@@ -138,6 +145,11 @@ type nopActiveSessionStore struct{}
 
 func (nopActiveSessionStore) Register(ctx context.Context, exchangeID string, record store.ActiveSessionRecord) error {
 	_, _, _ = ctx, exchangeID, record
+	return nil
+}
+func (nopActiveSessionStore) Deregister(ctx context.Context, exchangeID string) error {
+	_ = ctx
+	_ = exchangeID
 	return nil
 }
 

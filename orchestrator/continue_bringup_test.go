@@ -466,6 +466,10 @@ func (fake *recordingAgentStore) Retire(ctx context.Context, agentID agent.Agent
 	_, _, _ = ctx, agentID, retiredAt
 	return nil
 }
+func (fake *recordingAgentStore) UpdateTradingCapital(ctx context.Context, agentID agent.AgentID, value int64) error {
+	_, _, _ = ctx, agentID, value
+	return nil
+}
 
 type recordingRuntimeStore struct {
 	initialSnapshotCount atomic.Int32
@@ -532,6 +536,9 @@ func (fake *recordingRuntimeStore) SetTipFollowState(_ context.Context, _ string
 	return nil
 }
 func (fake *recordingRuntimeStore) SetPerceptionRefs(_ context.Context, _ string, _ agent.AgentID, _ string, _ store.PerceptionRefs) error {
+	return nil
+}
+func (fake *recordingRuntimeStore) DropSession(_ context.Context, _ string) error {
 	return nil
 }
 
@@ -612,6 +619,10 @@ func (fake *recordingActiveSessionStore) lastRecord() store.ActiveSessionRecord 
 	fake.recordMutex.Lock()
 	defer fake.recordMutex.Unlock()
 	return fake.registeredLast
+}
+func (fake *recordingActiveSessionStore) Deregister(ctx context.Context, exchangeID string) error {
+	_, _ = ctx, exchangeID
+	return nil
 }
 
 type programmableScenarioProvider struct {

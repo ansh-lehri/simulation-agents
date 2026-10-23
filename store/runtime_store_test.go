@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strconv"
 	"testing"
@@ -612,6 +613,75 @@ func TestSetPerceptionRefs_TwoInstrumentsIsolated(t *testing.T) {
 		if decoded != tc.want {
 			t.Errorf("gate_refs:%s: got %+v want %+v", tc.instrument, decoded, tc.want)
 		}
+	}
+}
+
+// DropSession must wipe every per-agent runtime key, the shared tip
+// slot, and the market-data cache for one exchange, and must not stop
+// after a single SCAN page — the seeded key count here is deliberately
+// larger than one page so the loop has to walk a non-zero cursor at
+// least once. A key under a different exchange must survive untouched.
+func TestDropSession_WipesAllThreeKeyPatternsAcrossMultipleScanPages(t *testing.T) {
+	client := openTestRedis(t)
+	ctx := context.Background()
+	runtimeStore := store.NewRedisRuntimeStore(client)
+
+	const targetExchange = "ex-drop"
+	const otherExchange = "ex-keep"
+	const seededPerPatternCount = 900 // larger than the store's internal SCAN page size
+
+	for index := 0; index < seededPerPatternCount; index++ {
+		agentID := agent.AgentID(fmt.Sprintf("a-%d", index))
+		if err := runtimeStore.SetPresence(ctx, targetExchange, agentID, store.PresenceActive); err != nil {
+			t.Fatalf("seed agent runtime key %d: %v", index, err)
+		}
+		instrument := fmt.Sprintf("INST-%d", index)
+		if err := client.Set(ctx, store.QuoteKey(targetExchange, instrument), "quote-payload", 0).Err(); err != nil {
+			t.Fatalf("seed market data key %d: %v", index, err)
+		}
+	}
+	if err := client.Set(ctx, store.TipSlotKey(targetExchange), "tip-payload", 0).Err(); err != nil {
+		t.Fatalf("seed tip slot key: %v", err)
+	}
+	// A key under a different exchange — must survive DropSession(targetExchange).
+	if err := runtimeStore.SetPresence(ctx, otherExchange, "a-0", store.PresenceActive); err != nil {
+		t.Fatalf("seed other-exchange key: %v", err)
+	}
+
+	if err := runtimeStore.DropSession(ctx, targetExchange); err != nil {
+		t.Fatalf("DropSession: %v", err)
+	}
+
+	agentKeysRemaining, err := client.Keys(ctx, fmt.Sprintf("runtime:%s:agent:*", targetExchange)).Result()
+	if err != nil {
+		t.Fatalf("KEYS agent runtime: %v", err)
+	}
+	if len(agentKeysRemaining) != 0 {
+		t.Errorf("agent runtime keys remaining after DropSession: got %d want 0", len(agentKeysRemaining))
+	}
+
+	tipSlotExists, err := client.Exists(ctx, store.TipSlotKey(targetExchange)).Result()
+	if err != nil {
+		t.Fatalf("EXISTS tip slot: %v", err)
+	}
+	if tipSlotExists != 0 {
+		t.Error("tip slot key still present after DropSession")
+	}
+
+	marketDataKeysRemaining, err := client.Keys(ctx, fmt.Sprintf("marketdata:%s:*", targetExchange)).Result()
+	if err != nil {
+		t.Fatalf("KEYS market data: %v", err)
+	}
+	if len(marketDataKeysRemaining) != 0 {
+		t.Errorf("market data keys remaining after DropSession: got %d want 0", len(marketDataKeysRemaining))
+	}
+
+	otherExchangeKeyExists, err := client.Exists(ctx, store.RuntimeKey(otherExchange, "a-0")).Result()
+	if err != nil {
+		t.Fatalf("EXISTS other-exchange key: %v", err)
+	}
+	if otherExchangeKeyExists != 1 {
+		t.Error("DropSession must not touch another exchange's runtime key")
 	}
 }
 

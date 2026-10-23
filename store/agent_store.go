@@ -41,6 +41,14 @@ type AgentStore interface {
 	// Retire sets retired_at on the matching row. Subsequent LiveMembers
 	// calls exclude it. If no row matches, this is a silent no-op.
 	Retire(ctx context.Context, agentID agent.AgentID, retiredAt time.Time) error
+
+	// UpdateTradingCapital overwrites the persisted session-money
+	// column for one canonical agent — the session-end evolution of
+	// trading_capital off realized P&L. InsertAgent cannot perform this
+	// write (it is ON CONFLICT DO NOTHING), so this is the only path
+	// that ever changes an existing row's trading_capital. If no row
+	// matches, this is a silent no-op.
+	UpdateTradingCapital(ctx context.Context, agentID agent.AgentID, value int64) error
 }
 
 // PostgresAgentStore is the Postgres-backed AgentStore.
@@ -147,6 +155,14 @@ func (agentStore *PostgresAgentStore) Retire(ctx context.Context, agentID agent.
 	const retireSQL = `UPDATE agents SET retired_at = $2 WHERE agent_id = $1`
 	if _, err := agentStore.querier.Exec(ctx, retireSQL, string(agentID), retiredAt); err != nil {
 		return fmt.Errorf("agent_store: retire %s: %w", agentID, err)
+	}
+	return nil
+}
+
+func (agentStore *PostgresAgentStore) UpdateTradingCapital(ctx context.Context, agentID agent.AgentID, value int64) error {
+	const updateCapitalSQL = `UPDATE agents SET trading_capital = $2 WHERE agent_id = $1`
+	if _, err := agentStore.querier.Exec(ctx, updateCapitalSQL, string(agentID), value); err != nil {
+		return fmt.Errorf("agent_store: update trading capital for %s: %w", agentID, err)
 	}
 	return nil
 }

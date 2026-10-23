@@ -16,10 +16,6 @@ import (
 // with what params — the record is the one place that durable
 // session shape (country, session_type, instruments, time window,
 // broker_id, scenario curve) is kept.
-//
-// Register is LIVE this phase; Deregister (teardown at session end
-// or on abort-cleanup) lives in the resilience phase and is not
-// declared on this interface yet to keep the surface small.
 type ActiveSessionStore interface {
 	// Register writes the per-exchange record under the
 	// sessions:active HASH. Overwrite semantics: a subsequent
@@ -27,6 +23,14 @@ type ActiveSessionStore interface {
 	// (the orchestrator must only Register for an exchange that
 	// is coming up fresh).
 	Register(ctx context.Context, exchangeID string, record ActiveSessionRecord) error
+
+	// Deregister removes the per-exchange record from the
+	// sessions:active HASH. This is the teardown commit point: a
+	// restarted process reads sessions:active to decide which
+	// sessions to respawn, so an exchange_id must only be removed
+	// here once every other teardown write for that session has
+	// already landed. If no entry matches, this is a silent no-op.
+	Deregister(ctx context.Context, exchangeID string) error
 }
 
 // ActiveSessionRecord is the shape serialized under one hash field
@@ -95,6 +99,19 @@ func (sessionStore *RedisActiveSessionStore) Register(
 	}
 	if setErr := sessionStore.client.HSet(ctx, SessionsActiveKey(), exchangeID, payload).Err(); setErr != nil {
 		return fmt.Errorf("store: HSET sessions:active for %s: %w", exchangeID, setErr)
+	}
+	return nil
+}
+
+// Deregister removes one exchange's entry from sessions:active via
+// HDEL. Called last in teardown, after every durable write and every
+// other Redis cleanup for the session has already completed.
+func (sessionStore *RedisActiveSessionStore) Deregister(ctx context.Context, exchangeID string) error {
+	if exchangeID == "" {
+		return fmt.Errorf("store: Deregister active session requires a non-empty exchange id")
+	}
+	if err := sessionStore.client.HDel(ctx, SessionsActiveKey(), exchangeID).Err(); err != nil {
+		return fmt.Errorf("store: HDEL sessions:active for %s: %w", exchangeID, err)
 	}
 	return nil
 }

@@ -166,6 +166,15 @@ type RuntimeStore interface {
 	// against these stored refs to decide whether enough has changed to
 	// warrant re-running perception.
 	SetPerceptionRefs(ctx context.Context, exchangeID string, agentID agent.AgentID, instrument string, refs PerceptionRefs) error
+
+	// DropSession wipes every runtime and market-data key this session
+	// wrote: every per-agent runtime hash, the shared tip slot, and the
+	// candle/quote cache, all scoped to exchangeID. Redis has no glob
+	// delete, so the per-agent and market-data key sets are each walked
+	// page-by-page via SCAN and UNLINKed as they're found, rather than
+	// deleted in one call. Called once, at teardown, before the session
+	// is struck off the active-sessions registry.
+	DropSession(ctx context.Context, exchangeID string) error
 }
 
 // RedisRuntimeStore is the Redis-backed RuntimeStore.
@@ -334,6 +343,50 @@ func (redisStore *RedisRuntimeStore) SetPerceptionRefs(ctx context.Context, exch
 		return fmt.Errorf("store: set perception refs for %s/%s on %s: %w", agentID, instrument, exchangeID, err)
 	}
 	return nil
+}
+
+func (redisStore *RedisRuntimeStore) DropSession(ctx context.Context, exchangeID string) error {
+	agentKeyPattern := fmt.Sprintf("runtime:%s:agent:*", exchangeID)
+	if err := scanAndUnlinkMatching(ctx, redisStore.client, agentKeyPattern); err != nil {
+		return fmt.Errorf("store: drop session agent runtime keys for %s: %w", exchangeID, err)
+	}
+	if err := redisStore.client.Unlink(ctx, TipSlotKey(exchangeID)).Err(); err != nil {
+		return fmt.Errorf("store: drop session tip slot for %s: %w", exchangeID, err)
+	}
+	marketDataKeyPattern := fmt.Sprintf("marketdata:%s:*", exchangeID)
+	if err := scanAndUnlinkMatching(ctx, redisStore.client, marketDataKeyPattern); err != nil {
+		return fmt.Errorf("store: drop session market data keys for %s: %w", exchangeID, err)
+	}
+	return nil
+}
+
+// scanKeyPageSize bounds how many keys SCAN returns per cursor page.
+// Chosen to keep each round trip small without so many pages that
+// wiping a large session's keyspace takes an excessive number of calls.
+const scanKeyPageSize = 500
+
+// scanAndUnlinkMatching walks the full keyspace matching pattern one
+// SCAN page at a time and UNLINKs every key found on that page. A
+// single matching key is never deleted directly by name — only this
+// pattern-walk path is used, because the caller knows the glob, not
+// the individual keys underneath it.
+func scanAndUnlinkMatching(ctx context.Context, client *redis.Client, pattern string) error {
+	var cursor uint64
+	for {
+		matchedKeys, nextCursor, err := client.Scan(ctx, cursor, pattern, scanKeyPageSize).Result()
+		if err != nil {
+			return fmt.Errorf("scan %s: %w", pattern, err)
+		}
+		if len(matchedKeys) > 0 {
+			if err := client.Unlink(ctx, matchedKeys...).Err(); err != nil {
+				return fmt.Errorf("unlink %d keys matching %s: %w", len(matchedKeys), pattern, err)
+			}
+		}
+		cursor = nextCursor
+		if cursor == 0 {
+			return nil
+		}
+	}
 }
 
 // MarkSessionLoadFailed stamps the pre-open session-install failure
