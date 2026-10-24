@@ -108,10 +108,21 @@ type OpenOrder struct {
 	CancelInFlight bool   `json:"cancel_in_flight"`
 }
 
-// RecentTrade is one closed trade row from the durable store, merged
-// into the observation response alongside the live own-state. Core
-// caps the slice length server-side; the agent process gets a bounded
-// tail of history without a separate call.
+// RecentTrade is one closed trade row merged into the observation
+// response alongside the live own-state. The source depends on session
+// mode:
+//
+//   - Canonical sessions: rows come from the durable Postgres store;
+//     Core caps the slice at ~20 newest-first on the server side.
+//   - On-demand (practice) sessions: rows come from the in-session
+//     trade log held live on the broker shard — no Postgres write ever
+//     happens for on-demand, so this is the only read path. The slice
+//     is unbounded (practice sessions are short), and trades vanish
+//     when the session ends.
+//
+// In both modes the wire shape is identical. TradesDegraded is false
+// for on-demand (the in-session log never fails); it can be true only
+// for canonical when the Postgres read blips.
 //
 // EntryAt and ExitAt arrive as timezone-carrying ISO strings on the
 // wire and decode into time.Time via the standard json package —
@@ -143,12 +154,14 @@ type RecentTrade struct {
 // orders assembled in one shard visit, merged with a tail of recent
 // closed trades.
 //
-// TradesDegraded indicates that the recent-trades leg failed on
-// Core's side (durable store blip) and RecentTrades is empty as a
-// result; the live own-state (balance / positions / orders) is still
-// authoritative in that case. Agents that need trade history on a
-// degraded tick should degrade their reasoning accordingly rather
-// than assume no trades happened.
+// TradesDegraded is true only for canonical sessions when the Postgres
+// recent-trades read fails; RecentTrades is empty in that case but the
+// live own-state (balance / positions / orders) is still authoritative.
+// For on-demand sessions TradesDegraded is always false — Core serves
+// trades from the live in-session log, which cannot degrade
+// independently. Agents that observe TradesDegraded on a canonical
+// tick should degrade their reasoning accordingly rather than assume
+// no trades happened.
 type AccountObservation struct {
 	Balance        AccountBalance `json:"balance"`
 	Positions      []Position     `json:"positions"`
