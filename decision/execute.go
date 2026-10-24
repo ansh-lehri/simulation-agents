@@ -97,7 +97,10 @@ func oppositeDirection(positionQty int64, direction float64) bool {
 func freeCapital(tradingCapital int64, positions []core.Position) int64 {
 	var committed int64
 	for _, position := range positions {
-		committed += position.WeightedAvgEntry * absInt64(position.Qty)
+		// WeightedAvgEntry is in ticks; multiply by 0.01 to convert to
+		// rupees before scaling by qty so committed is in the same unit as
+		// tradingCapital.
+		committed += int64(float64(position.WeightedAvgEntry) * 0.01 * float64(absInt64(position.Qty)))
 	}
 	return tradingCapital - committed
 }
@@ -189,7 +192,9 @@ func buildOpenOrAddOrder(
 		noisyLimitPrice = applyPriceNoise(limitPrice, spread, traits.Skill, rng, cfg.SigmaExec)
 	}
 
-	ceiling := int64(math.Floor(float64(available) / float64(currentPrice)))
+	// currentPrice is in ticks; convert to rupees (* 0.01) before dividing
+	// available (in rupees) so the ceiling is in units, not a near-zero value.
+	ceiling := int64(math.Floor(float64(available) / (float64(currentPrice) * 0.01)))
 	finalQty := clampInt64(noisyQty, 1, ceiling)
 
 	return assembleOrder(ambient.AccountID, ambient.Instrument, side, orderType, finalQty, noisyLimitPrice), true
