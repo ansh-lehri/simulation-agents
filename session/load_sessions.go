@@ -2,10 +2,14 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"sync"
+	"time"
 
 	"simulation-agents/agent"
+	"simulation-agents/core"
 	"simulation-agents/orchestrator/generator"
 	"simulation-agents/transport"
 )
@@ -272,7 +276,43 @@ func (runner *Runner) installOneAgent(
 		}
 		return join.SessionID, nil
 	case agent.PopulationOnDemand:
-		join, joinErr := runner.dependencies.Core.JoinOnDemand(ctx, agentUserID, request.ExchangeID)
+		// The conductor's StartOnDemand commits the market to Live only
+		// after broker.StartSession completes (a Redis snapshot write,
+		// ~1s). The async bring-up tail can race past that window and
+		// call JoinOnDemand while the market is still Provisioning.
+		// The conductor returns 503 for that transient gap; retry with
+		// a short backoff until the market flips Live or the context
+		// expires.
+		const (
+			onDemandJoinMaxAttempts = 10
+			onDemandJoinRetryDelay  = 500 * time.Millisecond
+		)
+		var join core.OnDemandSessionJoin
+		var joinErr error
+		for attempt := 0; attempt < onDemandJoinMaxAttempts; attempt++ {
+			if attempt > 0 {
+				select {
+				case <-ctx.Done():
+					return "", fmt.Errorf("session: JoinOnDemand aborted waiting for market live: %w", ctx.Err())
+				case <-time.After(onDemandJoinRetryDelay):
+				}
+			}
+			join, joinErr = runner.dependencies.Core.JoinOnDemand(ctx, agentUserID, request.ExchangeID)
+			if joinErr == nil {
+				break
+			}
+			var callErr *core.CallError
+			if errors.As(joinErr, &callErr) && callErr.HTTPStatus == http.StatusServiceUnavailable {
+				runner.dependencies.Logger.Info(
+					"session: JoinOnDemand 503 — market initializing, retrying",
+					"exchange_id", request.ExchangeID,
+					"agent_id", agentUserID,
+					"attempt", attempt+1,
+				)
+				continue
+			}
+			break
+		}
 		if joinErr != nil {
 			return "", joinErr
 		}
