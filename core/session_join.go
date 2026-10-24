@@ -156,7 +156,7 @@ func (client *Client) JoinOnDemand(ctx context.Context, agentUserID, exchangeID 
 // identity (owner_type "agent_operator") — see
 // docs/agents/LIQUIDITY_SEEDER.md.
 func (client *Client) JoinOnDemandAsOperator(ctx context.Context, operatorUserID, exchangeID string) (OnDemandSessionJoin, error) {
-	return client.joinOnDemandAs(ctx, operatorUserID, exchangeID, "agent")
+	return client.joinOnDemandAs(ctx, operatorUserID, exchangeID, "agent_operator")
 }
 
 func (client *Client) joinOnDemandAs(ctx context.Context, userID, exchangeID, ownerType string) (OnDemandSessionJoin, error) {
