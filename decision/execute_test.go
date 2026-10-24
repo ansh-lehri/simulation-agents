@@ -51,14 +51,14 @@ func TestExecute_Flat_RunsOpenMath(t *testing.T) {
 		AccountID: "acct-1", Instrument: "AAPL", Timeframe: "1m",
 		TradingCapital: 10_000,
 	}
-	acc := quoteAccessor("AAPL", twoSidedQuote(99, 101, 100))
+	acc := quoteAccessor("AAPL", twoSidedQuote(9900, 10100, 10000))
 	intent := ExecIntent{Action: ExecIntentActionOpen, Direction: 1, Conviction: 0.5}
 
 	req, ok := Execute(intent, ambient, acc, testExecTraits(0.9, 1), newExecRNG(1), testExecParams())
 	if !ok {
 		t.Fatal("Execute: got ok=false for a flat agent with capital and a valid price, want ok=true")
 	}
-	// baseNotional = 10000*0.4*0.5 = 2000; qty = floor(2000/100) = 20.
+	// baseNotional = 10000*0.4*0.5 = 2000; qty = floor(2000/(10000*0.01)) = floor(2000/100) = 20.
 	if req.Qty != 20 {
 		t.Errorf("Qty: got %d, want 20", req.Qty)
 	}
@@ -71,16 +71,16 @@ func TestExecute_HoldingSameDirection_RunsAddMathWithSharedFormula(t *testing.T)
 	ambient := AmbientInputs{
 		AccountID: "acct-1", Instrument: "AAPL", Timeframe: "1m",
 		TradingCapital: 10_000,
-		Positions:      []core.Position{{Instrument: "AAPL", Qty: 10, WeightedAvgEntry: 100}},
+		Positions:      []core.Position{{Instrument: "AAPL", Qty: 10, WeightedAvgEntry: 10000}},
 	}
-	acc := quoteAccessor("AAPL", twoSidedQuote(99, 101, 100))
+	acc := quoteAccessor("AAPL", twoSidedQuote(9900, 10100, 10000))
 	intent := ExecIntent{Action: ExecIntentActionOpen, Direction: 1, Conviction: 0.5}
 
 	req, ok := Execute(intent, ambient, acc, testExecTraits(0.9, 1), newExecRNG(1), testExecParams())
 	if !ok {
 		t.Fatal("Execute: got ok=false for a same-direction add, want ok=true")
 	}
-	// committed = 10*100 = 1000; available = 9000; baseNotional = 9000*0.4*0.5 = 1800; qty = floor(1800/100) = 18.
+	// committed = int64(10000*0.01*10) = 1000; available = 9000; baseNotional = 9000*0.4*0.5 = 1800; qty = floor(1800/(10000*0.01)) = floor(1800/100) = 18.
 	if req.Qty != 18 {
 		t.Errorf("Qty: got %d, want 18 (the existing same-instrument position must shrink the shared pool)", req.Qty)
 	}
@@ -90,9 +90,9 @@ func TestExecute_HoldingOppositeDirection_Ignored(t *testing.T) {
 	ambient := AmbientInputs{
 		AccountID: "acct-1", Instrument: "AAPL", Timeframe: "1m",
 		TradingCapital: 10_000,
-		Positions:      []core.Position{{Instrument: "AAPL", Qty: 10, WeightedAvgEntry: 100}},
+		Positions:      []core.Position{{Instrument: "AAPL", Qty: 10, WeightedAvgEntry: 10000}},
 	}
-	acc := quoteAccessor("AAPL", twoSidedQuote(99, 101, 100))
+	acc := quoteAccessor("AAPL", twoSidedQuote(9900, 10100, 10000))
 	intent := ExecIntent{Action: ExecIntentActionOpen, Direction: -1, Conviction: 0.9}
 
 	_, ok := Execute(intent, ambient, acc, testExecTraits(0.9, 1), newExecRNG(1), testExecParams())
@@ -105,9 +105,9 @@ func TestExecute_ActionClose_RoutesToCloseRegardlessOfDirectionVsPositionSign(t 
 	ambient := AmbientInputs{
 		AccountID: "acct-1", Instrument: "AAPL", Timeframe: "1m",
 		TradingCapital: 1_000_000, // deliberately huge so a bug that fell through to OPEN/ADD math would size very differently
-		Positions:      []core.Position{{Instrument: "AAPL", Qty: 10, WeightedAvgEntry: 100}},
+		Positions:      []core.Position{{Instrument: "AAPL", Qty: 10, WeightedAvgEntry: 10000}},
 	}
-	acc := quoteAccessor("AAPL", twoSidedQuote(99, 101, 100))
+	acc := quoteAccessor("AAPL", twoSidedQuote(9900, 10100, 10000))
 	// Direction matches the position's own sign (long, +1) — if the dispatch
 	// were (wrongly) deriving close from a sign comparison rather than
 	// reading Action directly, this would read as "holding same direction"
@@ -129,7 +129,7 @@ func TestExecute_ActionClose_RoutesToCloseRegardlessOfDirectionVsPositionSign(t 
 // --- qty, formulation Y (open/add)
 
 func TestBuildOpenOrAddOrder_SharedCapitalPool_ExistingPositionElsewhereReducesAvailable(t *testing.T) {
-	acc := quoteAccessor("MSFT", twoSidedQuote(99, 101, 100))
+	acc := quoteAccessor("MSFT", twoSidedQuote(9900, 10100, 10000))
 	intent := ExecIntent{Action: ExecIntentActionOpen, Direction: 1, Conviction: 1}
 	cfg := testExecParams()
 	cfg.MaxFrac = 1 // isolate the shared-pool effect from max_frac shaping
@@ -144,7 +144,7 @@ func TestBuildOpenOrAddOrder_SharedCapitalPool_ExistingPositionElsewhereReducesA
 
 	withOtherPosition := AmbientInputs{
 		AccountID: "acct-1", Instrument: "MSFT", Timeframe: "1m", TradingCapital: 10_000,
-		Positions: []core.Position{{Instrument: "AAPL", Qty: 50, WeightedAvgEntry: 100}}, // consumes 5000 of the pool
+		Positions: []core.Position{{Instrument: "AAPL", Qty: 50, WeightedAvgEntry: 10000}}, // committed = int64(10000*0.01*50) = 5000; consumes 5000 of the pool
 	}
 	reqB, okB := Execute(intent, withOtherPosition, acc, testExecTraits(0.9, 1), newExecRNG(1), cfg)
 	if !okB {
@@ -160,13 +160,13 @@ func TestBuildOpenOrAddOrder_SharedCapitalPool_ExistingPositionElsewhereReducesA
 }
 
 func TestBuildOpenOrAddOrder_Edges(t *testing.T) {
-	acc := quoteAccessor("AAPL", twoSidedQuote(99, 101, 100))
+	acc := quoteAccessor("AAPL", twoSidedQuote(9900, 10100, 10000))
 	cfg := testExecParams()
 
 	t.Run("capital already fully committed elsewhere", func(t *testing.T) {
 		ambient := AmbientInputs{
 			AccountID: "acct-1", Instrument: "AAPL", Timeframe: "1m", TradingCapital: 1_000,
-			Positions: []core.Position{{Instrument: "OTHER", Qty: 10, WeightedAvgEntry: 100}}, // consumes all 1000
+			Positions: []core.Position{{Instrument: "OTHER", Qty: 10, WeightedAvgEntry: 10000}}, // consumes all 1000
 		}
 		intent := ExecIntent{Action: ExecIntentActionOpen, Direction: 1, Conviction: 1}
 		_, ok := Execute(intent, ambient, acc, testExecTraits(0.9, 1), newExecRNG(1), cfg)
@@ -286,7 +286,7 @@ func TestExecute_FixedSeed_IsDeterministic(t *testing.T) {
 	ambient := AmbientInputs{
 		AccountID: "acct-1", Instrument: "AAPL", Timeframe: "1m", TradingCapital: 10_000,
 	}
-	acc := quoteAccessor("AAPL", twoSidedQuote(99, 101, 100))
+	acc := quoteAccessor("AAPL", twoSidedQuote(9900, 10100, 10000))
 	cfg := testExecParams()
 	cfg.SigmaExec = 0.2
 	intent := ExecIntent{Action: ExecIntentActionOpen, Direction: 1, Conviction: 0.6}
@@ -304,7 +304,7 @@ func TestExecute_Noise_NeverChangesTypeOrSide(t *testing.T) {
 	ambient := AmbientInputs{
 		AccountID: "acct-1", Instrument: "AAPL", Timeframe: "1m", TradingCapital: 10_000,
 	}
-	acc := quoteAccessor("AAPL", twoSidedQuote(99, 101, 100))
+	acc := quoteAccessor("AAPL", twoSidedQuote(9900, 10100, 10000))
 	cfg := testExecParams()
 	cfg.SigmaExec = 0.3
 	cfg.ThetaMarket = 1 // keep the whole sweep on the limit branch so a flip would be obvious
@@ -331,13 +331,13 @@ func TestExecute_PostNoiseClamp_OpenAdd_RespectsCapitalCeiling(t *testing.T) {
 	ambient := AmbientInputs{
 		AccountID: "acct-1", Instrument: "AAPL", Timeframe: "1m", TradingCapital: 10_000,
 	}
-	acc := quoteAccessor("AAPL", twoSidedQuote(99, 101, 100))
+	acc := quoteAccessor("AAPL", twoSidedQuote(9900, 10100, 10000))
 	cfg := testExecParams()
 	cfg.SigmaExec = 5 // deliberately extreme to push noise past both clamp bounds
 	intent := ExecIntent{Action: ExecIntentActionOpen, Direction: 1, Conviction: 1}
 	traits := testExecTraits(0.5, 0)
 
-	ceiling := int64(10_000 / 100) // available / price
+	ceiling := int64(10_000 / 100) // available / (price_ticks * 0.01) = 10000 / (10000 * 0.01) = 100
 	for seed := uint64(0); seed < 200; seed++ {
 		req, ok := Execute(intent, ambient, acc, traits, newExecRNG(seed), cfg)
 		if !ok {
@@ -354,9 +354,9 @@ func TestExecute_PostNoiseClamp_OpenAdd_RespectsCapitalCeiling(t *testing.T) {
 func TestExecute_Close_ConvictionHasNoEffect(t *testing.T) {
 	ambient := AmbientInputs{
 		AccountID: "acct-1", Instrument: "AAPL", Timeframe: "1m", TradingCapital: 10_000,
-		Positions: []core.Position{{Instrument: "AAPL", Qty: 10, ReservedQty: 2, WeightedAvgEntry: 100}},
+		Positions: []core.Position{{Instrument: "AAPL", Qty: 10, ReservedQty: 2, WeightedAvgEntry: 10000}},
 	}
-	acc := quoteAccessor("AAPL", twoSidedQuote(99, 101, 100))
+	acc := quoteAccessor("AAPL", twoSidedQuote(9900, 10100, 10000))
 	cfg := testExecParams()
 	traits := testExecTraits(0.5, 1)
 
@@ -374,9 +374,9 @@ func TestExecute_Close_ConvictionHasNoEffect(t *testing.T) {
 func TestExecute_Close_UsesRawAggressivenessNotWarped(t *testing.T) {
 	ambient := AmbientInputs{
 		AccountID: "acct-1", Instrument: "AAPL", Timeframe: "1m", TradingCapital: 10_000,
-		Positions: []core.Position{{Instrument: "AAPL", Qty: 10, WeightedAvgEntry: 100}},
+		Positions: []core.Position{{Instrument: "AAPL", Qty: 10, WeightedAvgEntry: 10000}},
 	}
-	acc := quoteAccessor("AAPL", twoSidedQuote(99, 101, 100))
+	acc := quoteAccessor("AAPL", twoSidedQuote(9900, 10100, 10000))
 	cfg := testExecParams()
 	cfg.ThetaMarket = 0.6 // between the raw aggressiveness below and what a high-conviction warp would push it to
 	traits := testExecTraits(0.5, 1)
@@ -399,9 +399,9 @@ func TestExecute_Close_PostNoiseCeilingIsCloseableQtyNotCapital(t *testing.T) {
 	ambient := AmbientInputs{
 		AccountID: "acct-1", Instrument: "AAPL", Timeframe: "1m",
 		TradingCapital: 1_000_000_000, // capital-based ceiling would be enormous
-		Positions:      []core.Position{{Instrument: "AAPL", Qty: 5, WeightedAvgEntry: 100}},
+		Positions:      []core.Position{{Instrument: "AAPL", Qty: 5, WeightedAvgEntry: 10000}},
 	}
-	acc := quoteAccessor("AAPL", twoSidedQuote(99, 101, 100))
+	acc := quoteAccessor("AAPL", twoSidedQuote(9900, 10100, 10000))
 	cfg := testExecParams()
 	cfg.SigmaExec = 5
 	traits := testExecTraits(0.5, 0)
@@ -423,7 +423,7 @@ func TestExecute_Close_NoCloseableQty_NoOrder(t *testing.T) {
 		AccountID: "acct-1", Instrument: "AAPL", Timeframe: "1m", TradingCapital: 10_000,
 		Positions: []core.Position{{Instrument: "AAPL", Qty: 5, ReservedQty: 5}},
 	}
-	acc := quoteAccessor("AAPL", twoSidedQuote(99, 101, 100))
+	acc := quoteAccessor("AAPL", twoSidedQuote(9900, 10100, 10000))
 	intent := ExecIntent{Action: ExecIntentActionClose, Direction: 1, Conviction: 1}
 
 	_, ok := Execute(intent, ambient, acc, testExecTraits(0.5, 1), newExecRNG(1), testExecParams())
