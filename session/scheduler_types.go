@@ -232,7 +232,16 @@ func decide(input decideInput) (core.OrderPunchRequest, bool) {
 
 	candidates := make([]decision.InstrumentCandidate, 0, len(input.market.instruments))
 	for _, inst := range input.market.instruments {
-		if !acc.Present(inst) {
+		// if !acc.Present(inst) {
+		// 	continue
+		// }
+		// Present(inst) only checks for a live WS quote. On a freshly
+		// constructed market (on-demand), no quote exists until a
+		// trade prints, but no trade can print if every instrument is
+		// skipped before anyone considers it — a permanent deadlock.
+		// CurrentPrice falls back to the last candle close when no
+		// quote is present, so gate on "any price at all" instead.
+		if _, priceOK := acc.CurrentPrice(inst, tf); !priceOK {
 			continue
 		}
 

@@ -32,10 +32,12 @@ func TestSubscribeLiveHappyPathBatchesAllSubsOnOneWebSocket(t *testing.T) {
 	instruments := []string{"stock1", "stock2"}
 	request := subscribeBringUpRequest(instruments)
 	feedSessionID := "sess-feed-1"
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	joinCtx, cancelJoin := context.WithCancel(context.Background())
+	defer cancelJoin()
+	sessionCtx, cancelSession := context.WithCancel(context.Background())
+	defer cancelSession()
 
-	err := runner.subscribeLive(ctx, request, feedSessionID)
+	err := runner.subscribeLive(joinCtx, sessionCtx, request, feedSessionID)
 	if err != nil {
 		t.Fatalf("subscribeLive: %v", err)
 	}
@@ -58,13 +60,27 @@ func TestSubscribeLiveHappyPathBatchesAllSubsOnOneWebSocket(t *testing.T) {
 	}
 	assertSubscriptionsEqual(t, fakeCore.lastSubscriptions, wantSubs)
 
-	// Ingest was spawned on the one connection; cancelling ctx must
-	// close that connection via the ingest's defer close.
-	cancel()
+	// Ingest binds to sessionCtx, not joinCtx — joinCtx is the
+	// errgroup-derived context that Run's preOpenGroup.Wait() cancels
+	// the instant all three pre-open ops finish, seconds into the
+	// session. Cancelling it alone must NOT close the ingest
+	// connection; this is the exact regression this split guards
+	// against (ingest used to die right at the pre-open join).
+	cancelJoin()
+	select {
+	case <-fakeCore.connection.closedChannel:
+		t.Fatalf("ingest closed the connection on joinCtx cancel — it must only react to sessionCtx")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// Cancelling sessionCtx (the long-lived context Run itself holds
+	// for the session's whole life) must close the connection via
+	// ingest's defer close.
+	cancelSession()
 	select {
 	case <-fakeCore.connection.closedChannel:
 	case <-time.After(time.Second):
-		t.Fatalf("ingest did not close the connection within 1s after ctx cancel")
+		t.Fatalf("ingest did not close the connection within 1s after sessionCtx cancel")
 	}
 }
 
@@ -78,7 +94,7 @@ func TestSubscribeLiveFatalOnSubscribeError(t *testing.T) {
 	fakeCore.subscribeError = errors.New("dial failed")
 	runner := subscribeLiveTestRunnerWithTimeframes(t, fakeCore, []string{core.TimeframeOneMinute})
 
-	err := runner.subscribeLive(context.Background(), subscribeBringUpRequest([]string{"stock1"}), "sess-feed-1")
+	err := runner.subscribeLive(context.Background(), context.Background(), subscribeBringUpRequest([]string{"stock1"}), "sess-feed-1")
 	if err == nil {
 		t.Fatalf("expected fatal error on subscribe failure; got nil")
 	}
@@ -96,7 +112,7 @@ func TestSubscribeLiveRejectsEmptyFeedSessionIDWithoutHittingCore(t *testing.T) 
 
 	fakeCore := newProgrammableSubscribeCoreClient()
 	runner := subscribeLiveTestRunnerWithTimeframes(t, fakeCore, []string{core.TimeframeOneMinute})
-	err := runner.subscribeLive(context.Background(), subscribeBringUpRequest([]string{"stock1"}), "")
+	err := runner.subscribeLive(context.Background(), context.Background(), subscribeBringUpRequest([]string{"stock1"}), "")
 	if err == nil {
 		t.Fatalf("expected error on empty feed session id; got nil")
 	}
@@ -113,7 +129,7 @@ func TestSubscribeLiveRejectsEmptyInstrumentListWithoutHittingCore(t *testing.T)
 
 	fakeCore := newProgrammableSubscribeCoreClient()
 	runner := subscribeLiveTestRunnerWithTimeframes(t, fakeCore, []string{core.TimeframeOneMinute})
-	err := runner.subscribeLive(context.Background(), subscribeBringUpRequest(nil), "sess-feed-1")
+	err := runner.subscribeLive(context.Background(), context.Background(), subscribeBringUpRequest(nil), "sess-feed-1")
 	if err == nil {
 		t.Fatalf("expected error on empty instruments; got nil")
 	}
@@ -131,7 +147,7 @@ func TestSubscribeLiveRejectsEmptyTimeframesWithoutHittingCore(t *testing.T) {
 
 	fakeCore := newProgrammableSubscribeCoreClient()
 	runner := subscribeLiveTestRunnerWithTimeframes(t, fakeCore, nil)
-	err := runner.subscribeLive(context.Background(), subscribeBringUpRequest([]string{"stock1"}), "sess-feed-1")
+	err := runner.subscribeLive(context.Background(), context.Background(), subscribeBringUpRequest([]string{"stock1"}), "sess-feed-1")
 	if err == nil {
 		t.Fatalf("expected error on empty HistoryTimeframes; got nil")
 	}
@@ -151,7 +167,7 @@ func TestSubscribeLiveRejectsUnknownTimeframeWithoutHittingCore(t *testing.T) {
 
 	fakeCore := newProgrammableSubscribeCoreClient()
 	runner := subscribeLiveTestRunnerWithTimeframes(t, fakeCore, []string{core.TimeframeOneMinute, "15m"})
-	err := runner.subscribeLive(context.Background(), subscribeBringUpRequest([]string{"stock1"}), "sess-feed-1")
+	err := runner.subscribeLive(context.Background(), context.Background(), subscribeBringUpRequest([]string{"stock1"}), "sess-feed-1")
 	if err == nil {
 		t.Fatalf("expected error on unknown timeframe; got nil")
 	}
@@ -257,6 +273,32 @@ func (fake *programmableSubscribeCoreClient) JoinOnDemand(ctx context.Context, a
 	_ = agentUserID
 	_ = exchangeID
 	return core.OnDemandSessionJoin{}, nil
+}
+
+func (fake *programmableSubscribeCoreClient) JoinCanonicalAsOperator(ctx context.Context, operatorUserID, marketTag string) (core.CanonicalSessionJoin, error) {
+	_ = ctx
+	_ = operatorUserID
+	_ = marketTag
+	return core.CanonicalSessionJoin{}, nil
+}
+
+func (fake *programmableSubscribeCoreClient) JoinOnDemandAsOperator(ctx context.Context, operatorUserID, exchangeID string) (core.OnDemandSessionJoin, error) {
+	_ = ctx
+	_ = operatorUserID
+	_ = exchangeID
+	return core.OnDemandSessionJoin{}, nil
+}
+
+func (fake *programmableSubscribeCoreClient) OpenOperatorAccount(ctx context.Context, operatorUserID string) (string, error) {
+	_ = ctx
+	_ = operatorUserID
+	return "", nil
+}
+
+func (fake *programmableSubscribeCoreClient) SeedInventory(ctx context.Context, request core.SeedInventoryRequest) (core.SeedInventoryResponse, error) {
+	_ = ctx
+	_ = request
+	return core.SeedInventoryResponse{}, nil
 }
 
 func (fake *programmableSubscribeCoreClient) GetCandles(ctx context.Context, request core.CandlesRequest) (core.CandlesPage, error) {

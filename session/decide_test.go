@@ -219,6 +219,33 @@ func TestDecide_FirstCallPopulatesMemory(t *testing.T) {
 	}
 }
 
+// TestDecide_NoLiveQuoteButCandleExists_StillConsidersInstrument: a
+// freshly constructed market has no live quote yet (present=false,
+// no trade has ever printed) but does have candle history. decide()
+// must still traverse the instrument via CurrentPrice's candle
+// fallback rather than skipping it outright — skipping here would
+// permanently deadlock a cold-started market (no quote -> no
+// consideration -> no trade -> still no quote).
+func TestDecide_NoLiveQuoteButCandleExists_StillConsidersInstrument(t *testing.T) {
+	const inst = "COLD"
+	market := decideMarket(inst, "1m", 2000)
+	market.present[inst] = false
+	market.quote[inst] = store.Quote{}
+
+	input := makeDecideInput(
+		decideTimeTraits(),
+		market,
+		[]string{"1m"},
+		stubRuntimeStore{},
+	)
+	decide(input)
+
+	mem := input.agentState.perception[inst]
+	if mem == nil {
+		t.Fatal("instrument with no live quote but existing candles must still be considered — perception memory is nil")
+	}
+}
+
 func TestDecide_SecondCallCoastsOnUnchangedMarket(t *testing.T) {
 	// First call: empty refs → gate fires → Perceive runs → refs populated.
 	// Second call: same snapshot, same phase → gate returns false → Perceive

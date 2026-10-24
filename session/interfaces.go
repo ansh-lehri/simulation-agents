@@ -72,6 +72,31 @@ type CoreClient interface {
 	// the one call in this interface that reads the post-close state
 	// rather than an in-session one.
 	GetAccountCash(ctx context.Context, accountID string) (core.AccountCash, error)
+
+	// JoinCanonicalAsOperator / JoinOnDemandAsOperator are
+	// JoinCanonical/JoinOnDemand for a liquidity-seeder identity
+	// (owner_type "agent_operator" instead of "agent"). A seeder must
+	// use these, not the plain agent variants — EnsureAccount is keyed
+	// by (owner_type, owner_id), so joining under the wrong owner_type
+	// installs the session on a different account row than the one
+	// OpenOperatorAccount already opened, and every later order/
+	// seed-inventory call against the seeder's real account 409s
+	// "no session".
+	JoinCanonicalAsOperator(ctx context.Context, operatorUserID, marketTag string) (core.CanonicalSessionJoin, error)
+	JoinOnDemandAsOperator(ctx context.Context, operatorUserID, exchangeID string) (core.OnDemandSessionJoin, error)
+
+	// OpenOperatorAccount opens a liquidity-seeder identity (Core's
+	// OwnerAgentOperator owner type, funded well above a normal agent).
+	// Called once per seeder at session bringup, before it joins and
+	// starts resting/lifting orders.
+	OpenOperatorAccount(ctx context.Context, operatorUserID string) (string, error)
+
+	// SeedInventory mints opening inventory on a seller seeder's
+	// account so it can rest a sell-side limit order without ever
+	// having bought anything (a SELL reserves units, not cash, and
+	// positions can't go negative). Called once per seller seeder per
+	// instrument before its first ask.
+	SeedInventory(ctx context.Context, request core.SeedInventoryRequest) (core.SeedInventoryResponse, error)
 }
 
 // WSConnection is the connection-handle shape the Runner consumes

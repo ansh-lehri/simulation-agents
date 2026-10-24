@@ -138,13 +138,19 @@ func (runner *Runner) Run(
 		return runner.pullHistory(groupCtx, request)
 	})
 	preOpenGroup.Go(func() error {
-		return runner.subscribeLive(groupCtx, request, feedSessionID)
+		return runner.subscribeLive(groupCtx, ctx, request, feedSessionID)
 	})
 	// (4) join
 	if joinErr := preOpenGroup.Wait(); joinErr != nil {
 		runner.dependencies.Failure.FailBringUp(request, joinErr)
 		return
 	}
+
+	// (4.5) liquidity seeder — independent goroutine, bound to Run's own
+	// long-lived ctx (not groupCtx above, which dies at the join) so it
+	// keeps working the book for the whole session. No-op if both
+	// LiquiditySeeder counts are zero.
+	go runner.runLiquiditySeeder(ctx, request, runner.dependencies.RNGSource.Fresh())
 
 	// (5) go-live wait
 	if waitErr := runner.dependencies.Clock.WaitUntil(ctx, request.SessionStart); waitErr != nil {

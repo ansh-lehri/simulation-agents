@@ -103,6 +103,32 @@ func (stubCoreClient) JoinOnDemand(ctx context.Context, agentUserID, exchangeID 
 	return core.OnDemandSessionJoin{}, nil
 }
 
+func (stubCoreClient) JoinCanonicalAsOperator(ctx context.Context, operatorUserID, marketTag string) (core.CanonicalSessionJoin, error) {
+	_ = ctx
+	_ = operatorUserID
+	_ = marketTag
+	return core.CanonicalSessionJoin{}, nil
+}
+
+func (stubCoreClient) JoinOnDemandAsOperator(ctx context.Context, operatorUserID, exchangeID string) (core.OnDemandSessionJoin, error) {
+	_ = ctx
+	_ = operatorUserID
+	_ = exchangeID
+	return core.OnDemandSessionJoin{}, nil
+}
+
+func (stubCoreClient) OpenOperatorAccount(ctx context.Context, operatorUserID string) (string, error) {
+	_ = ctx
+	_ = operatorUserID
+	return "", nil
+}
+
+func (stubCoreClient) SeedInventory(ctx context.Context, request core.SeedInventoryRequest) (core.SeedInventoryResponse, error) {
+	_ = ctx
+	_ = request
+	return core.SeedInventoryResponse{}, nil
+}
+
 func (stubCoreClient) GetCandles(ctx context.Context, request core.CandlesRequest) (core.CandlesPage, error) {
 	_ = ctx
 	_ = request

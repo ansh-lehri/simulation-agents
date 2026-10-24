@@ -1,0 +1,101 @@
+# 2026/10/24 15:20:39.478835 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw best_bid: 1
+# 2026/10/24 15:20:39.478860 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw spread_ticks: 0
+# 2026/10/24 15:20:39.478868 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw has_bid: false
+# 2026/10/24 15:20:39.478907 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw has_ask: false
+# 2026/10/24 15:20:39.478914 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw last_price: 2
+# 2026/10/24 15:20:39.478925 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw trading_capital: 1
+# 2026/10/24 15:20:39.478931 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw other_qty: 0
+# 2026/10/24 15:20:39.478938 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw other_entry: 1
+# 2026/10/24 15:20:39.478948 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw direction: 1
+# 2026/10/24 15:20:39.478957 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw conviction: 1
+# 2026/10/24 15:20:39.478963 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw aggressiveness: 1
+# 2026/10/24 15:20:39.478972 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw skill: 1
+# 2026/10/24 15:20:39.478979 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw max_frac: 1
+# 2026/10/24 15:20:39.478985 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw gamma: 0.99
+# 2026/10/24 15:20:39.478991 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw theta_market: 1
+# 2026/10/24 15:20:39.478997 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw k_place: 1
+# 2026/10/24 15:20:39.479004 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw sigma_exec: 1
+# 2026/10/24 15:20:39.479017 [TestExecute_OpenAdd_ValidByConstruction] [rapid] draw seed: 0x0
+# 2026/10/24 15:20:39.479023 [TestExecute_OpenAdd_ValidByConstruction] Qty=0, want > 0
+# 
+v0.4.8#6582534218859891079
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x1
+0x0
+0x0
+0x1
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0

@@ -421,6 +421,32 @@ func (fake *recordingRunCore) JoinOnDemand(ctx context.Context, agentUserID, exc
 	return core.OnDemandSessionJoin{SessionID: "sess-" + agentUserID, Status: "active"}, nil
 }
 
+func (fake *recordingRunCore) JoinCanonicalAsOperator(ctx context.Context, operatorUserID, marketTag string) (core.CanonicalSessionJoin, error) {
+	_ = ctx
+	_ = operatorUserID
+	_ = marketTag
+	return core.CanonicalSessionJoin{}, nil
+}
+
+func (fake *recordingRunCore) JoinOnDemandAsOperator(ctx context.Context, operatorUserID, exchangeID string) (core.OnDemandSessionJoin, error) {
+	_ = ctx
+	_ = operatorUserID
+	_ = exchangeID
+	return core.OnDemandSessionJoin{}, nil
+}
+
+func (fake *recordingRunCore) OpenOperatorAccount(ctx context.Context, operatorUserID string) (string, error) {
+	_ = ctx
+	_ = operatorUserID
+	return "", nil
+}
+
+func (fake *recordingRunCore) SeedInventory(ctx context.Context, request core.SeedInventoryRequest) (core.SeedInventoryResponse, error) {
+	_ = ctx
+	_ = request
+	return core.SeedInventoryResponse{}, nil
+}
+
 func (fake *recordingRunCore) GetCandles(ctx context.Context, request core.CandlesRequest) (core.CandlesPage, error) {
 	_ = request
 	fake.getCandlesCount.Add(1)

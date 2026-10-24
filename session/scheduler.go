@@ -253,10 +253,12 @@ func (sched *LiveScheduler) runLoop(
 func (sched *LiveScheduler) runActionPhase(ctx context.Context, ws *workingSet, punchCh chan core.OrderPunchRequest, tick decision.TickContext) {
 	view := sched.snapshot(ctx, ws)
 	batch := make([]core.OrderPunchRequest, 0, len(ws.active))
+	actedCount := 0
 	for _, agentRecord := range ws.active {
 		if ws.sessionRNG.Float64() >= agentRecord.traits.PAct {
 			continue
 		}
+		actedCount++
 		capitalHandle := agentRecord.capitalHandle
 		input := decideInput{
 			agentState: agentRecord,
@@ -272,6 +274,22 @@ func (sched *LiveScheduler) runActionPhase(ctx context.Context, ws *workingSet, 
 		if req, punchNeeded := sched.decideFunc(input); punchNeeded {
 			batch = append(batch, req)
 		}
+	}
+	if len(ws.active) > 0 {
+		sched.logger.Info("session: action tick",
+			"exchange_id", ws.exchangeID,
+			"tick_index", tick.TickIndex,
+			"active_count", len(ws.active),
+			"acted_count", actedCount,
+			"punch_count", len(batch),
+		)
+	}
+	if actedCount > 0 && len(batch) == 0 && !anyInstrumentHasPrice(view, sched.params.ConfiguredTimeframes) {
+		sched.logger.Warn("session: no instrument has any price (live quote or candle) yet — agents cannot trade",
+			"exchange_id", ws.exchangeID,
+			"tick_index", tick.TickIndex,
+			"instruments", ws.instruments,
+		)
 	}
 	ws.sessionRNG.Shuffle(len(batch), func(i, j int) { batch[i], batch[j] = batch[j], batch[i] })
 	for _, req := range batch {
@@ -329,11 +347,45 @@ func (sched *LiveScheduler) runDispatcher(ctx context.Context, exchangeID string
 					"exchange_id", exchangeID,
 					"instrument", req.Instrument,
 				)
+				continue
 			}
+			sched.logger.Info("session: order punched",
+				"exchange_id", exchangeID,
+				"account_id", req.AccountID,
+				"instrument", req.Instrument,
+				"side", req.Side,
+				"type", req.Type,
+				"qty", req.Qty,
+				"limit_price", req.LimitPrice,
+			)
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+// anyInstrumentHasPrice reports whether at least one instrument in the
+// snapshot has a price available from either source decide() can use:
+// a live quote, or (the candle fallback) a non-empty candle list on
+// any of the configured timeframes. Used to distinguish "agents acted
+// but genuinely found nothing worth doing this tick" (a normal, quiet
+// outcome) from "agents acted but no instrument has any price at all"
+// (the real deadlock — nothing to decide against, on any source).
+// Mirrors decision.Accessor.CurrentPrice's two sources; checking only
+// the live quote here would flag the normal case too, since the quote
+// stream for a never-yet-traded instrument never arrives.
+func anyInstrumentHasPrice(view *snapshotView, timeframes []string) bool {
+	for _, inst := range view.instruments {
+		if quote, ok := view.quote[inst]; ok && quote.HasLast {
+			return true
+		}
+		for _, tf := range timeframes {
+			if len(view.candles[inst][tf]) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // earliestTime returns whichever of two times is earlier — used to

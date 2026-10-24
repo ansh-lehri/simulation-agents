@@ -15,10 +15,11 @@ const openAccountEndpointPath = "/v1/account/open"
 // /v1/account/open expects. Email is always sent empty because an
 // agent's identity on the Core side is its user_id string; email is a
 // legacy field required on the wire by the shared account-open contract
-// used by human sign-up. owner_type is always "agent" — this client
-// represents only agents; Core defaults an omitted owner_type to
-// "human" for its other (frontend signup/login) caller on this same
-// endpoint.
+// used by human sign-up. owner_type is "agent" for regular agents and
+// "agent_operator" for liquidity-seeder identities (OpenOperatorAccount)
+// — this client never represents a human; Core defaults an omitted
+// owner_type to "human" for its other (frontend signup/login) caller
+// on this same endpoint.
 type openAccountRequestEnvelope struct {
 	User openAccountRequestUser `json:"user"`
 }
@@ -53,11 +54,24 @@ type openAccountResponseEnvelope struct {
 // before trading begins, and tolerates the slack configured in
 // TimeoutConfig.PreOpenCall.
 func (client *Client) OpenAccount(ctx context.Context, agentUserID string) (string, error) {
-	if agentUserID == "" {
-		return "", fmt.Errorf("core: OpenAccount requires a non-empty agent user id")
+	return client.openAccountAs(ctx, agentUserID, "agent")
+}
+
+// OpenOperatorAccount opens a liquidity-seeder identity — Core's
+// OwnerAgentOperator owner type, funded well above a normal agent
+// account (see market-simulator's liquiditySeederFundingMultiple).
+// Same get-or-create/idempotent-retry semantics as OpenAccount; the
+// only difference on the wire is owner_type.
+func (client *Client) OpenOperatorAccount(ctx context.Context, operatorUserID string) (string, error) {
+	return client.openAccountAs(ctx, operatorUserID, "agent_operator")
+}
+
+func (client *Client) openAccountAs(ctx context.Context, userID, ownerType string) (string, error) {
+	if userID == "" {
+		return "", fmt.Errorf("core: OpenAccount requires a non-empty user id")
 	}
 	requestBody := openAccountRequestEnvelope{
-		User: openAccountRequestUser{UserID: agentUserID, Email: "", OwnerType: "agent"},
+		User: openAccountRequestUser{UserID: userID, Email: "", OwnerType: ownerType},
 	}
 	var responseBody openAccountResponseEnvelope
 	if err := client.executeIdempotentJSONCall(
@@ -77,7 +91,7 @@ func (client *Client) OpenAccount(ctx context.Context, agentUserID string) (stri
 		// a CallError.
 		return "", fmt.Errorf(
 			"core: OpenAccount for user_id %q returned 2xx with empty account_id",
-			agentUserID,
+			userID,
 		)
 	}
 	return responseBody.AccountID, nil

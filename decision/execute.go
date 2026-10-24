@@ -170,7 +170,7 @@ func buildOpenOrAddOrder(
 	// ceiling clamp belongs here. The only clamp against this pool
 	// comes back after execution noise, as a post-noise safety net.
 	baseNotional := float64(available) * cfg.MaxFrac * intent.Conviction
-	qty := int64(math.Floor(baseNotional / float64(currentPrice)))
+	qty := int64(math.Floor(baseNotional / (float64(currentPrice) * float64(0.01))))
 	if qty <= 0 {
 		return core.OrderPunchRequest{}, false
 	}

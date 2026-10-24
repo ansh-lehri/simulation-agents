@@ -38,6 +38,7 @@ func (sched *LiveScheduler) activateDormantAgents(
 	nowNorm float64,
 ) {
 	nowUnix := now.Unix()
+	activatedCount := 0
 	for agentID, agentRecord := range ws.agents {
 		if agentRecord.presence != store.PresenceDormant {
 			continue
@@ -53,6 +54,14 @@ func (sched *LiveScheduler) activateDormantAgents(
 		ws.active[agentID] = agentRecord
 		_ = sched.runtime.SetPresence(ctx, ws.exchangeID, agentID, store.PresenceActive)
 		_ = sched.runtime.SetTimers(ctx, ws.exchangeID, agentID, agentRecord.nextCheckTime, agentRecord.idleSince)
+		activatedCount++
+	}
+	if activatedCount > 0 {
+		sched.logger.Info("session: agents activated",
+			"exchange_id", ws.exchangeID,
+			"activated_count", activatedCount,
+			"active_total", len(ws.active),
+		)
 	}
 }
 
@@ -85,6 +94,7 @@ func (sched *LiveScheduler) checkActiveAgents(
 	nowUnix int64,
 	nowNorm float64,
 ) {
+	doneCount, stepOutCount := 0, 0
 	for agentID, agentRecord := range ws.active {
 		if nowUnix < agentRecord.nextCheckTime {
 			continue
@@ -97,6 +107,7 @@ func (sched *LiveScheduler) checkActiveAgents(
 			agentRecord.presence = store.PresenceDone
 			delete(ws.active, agentID)
 			_ = sched.runtime.SetPresence(ctx, ws.exchangeID, agentID, store.PresenceDone)
+			doneCount++
 			continue
 		}
 		if ws.sessionRNG.Float64() < pStepOut {
@@ -107,12 +118,21 @@ func (sched *LiveScheduler) checkActiveAgents(
 			delete(ws.active, agentID)
 			_ = sched.runtime.SetPresence(ctx, ws.exchangeID, agentID, store.PresenceIdle)
 			_ = sched.runtime.SetTimers(ctx, ws.exchangeID, agentID, agentRecord.nextCheckTime, agentRecord.idleSince)
+			stepOutCount++
 			continue
 		}
 		// Stay ACTIVE: re-arm for next check interval.
 		agentRecord.nextCheckTime = nowUnix + randCheckInterval(ws.sessionRNG, sched.params.CheckIntervalMin, sched.params.CheckIntervalMax)
 		agentRecord.lastCheckTime = nowUnix
 		_ = sched.runtime.SetTimers(ctx, ws.exchangeID, agentID, agentRecord.nextCheckTime, agentRecord.idleSince)
+	}
+	if doneCount > 0 || stepOutCount > 0 {
+		sched.logger.Info("session: active agent checks",
+			"exchange_id", ws.exchangeID,
+			"done_count", doneCount,
+			"step_out_count", stepOutCount,
+			"active_total", len(ws.active),
+		)
 	}
 }
 
@@ -131,6 +151,7 @@ func (sched *LiveScheduler) checkIdleAgents(
 	lifecycleChannel chan<- LifecycleDecision,
 ) {
 	_ = lifecycleChannel // RETIRE path is Tier 6; not built in this stage
+	reentryCount, giveUpCount := 0, 0
 	for agentID, agentRecord := range ws.agents {
 		if agentRecord.presence != store.PresenceIdle {
 			continue
@@ -150,17 +171,27 @@ func (sched *LiveScheduler) checkIdleAgents(
 			ws.active[agentID] = agentRecord
 			_ = sched.runtime.SetPresence(ctx, ws.exchangeID, agentID, store.PresenceActive)
 			_ = sched.runtime.SetTimers(ctx, ws.exchangeID, agentID, agentRecord.nextCheckTime, agentRecord.idleSince)
+			reentryCount++
 			continue
 		}
 		if ws.sessionRNG.Float64() < pGiveUp {
 			agentRecord.presence = store.PresenceDone
 			_ = sched.runtime.SetPresence(ctx, ws.exchangeID, agentID, store.PresenceDone)
+			giveUpCount++
 			continue
 		}
 		// Stay IDLE: re-arm for next check interval.
 		agentRecord.nextCheckTime = nowUnix + randCheckInterval(ws.sessionRNG, sched.params.CheckIntervalMin, sched.params.CheckIntervalMax)
 		agentRecord.lastCheckTime = nowUnix
 		_ = sched.runtime.SetTimers(ctx, ws.exchangeID, agentID, agentRecord.nextCheckTime, agentRecord.idleSince)
+	}
+	if reentryCount > 0 || giveUpCount > 0 {
+		sched.logger.Info("session: idle agent checks",
+			"exchange_id", ws.exchangeID,
+			"reentry_count", reentryCount,
+			"give_up_count", giveUpCount,
+			"active_total", len(ws.active),
+		)
 	}
 }
 

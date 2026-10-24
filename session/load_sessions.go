@@ -77,6 +77,7 @@ func (runner *Runner) installFeedAgent(
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return "", -1, firstPassErrors, fmt.Errorf("session: installFeedAgent aborted: %w", ctxErr)
 		}
+		runner.dependencies.Logger.Info("REQUEST::::       ", request)
 		sessionID, installErr := runner.installOneAgent(ctx, request, string(agentRecord.ID))
 		if installErr != nil {
 			firstPassErrors[agentRecord.ID] = installErr

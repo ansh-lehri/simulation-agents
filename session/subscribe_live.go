@@ -22,12 +22,23 @@ import (
 // on the tape, and the ingest loop will see the ack as a frame
 // when it drains the socket.
 //
-// The spawned ingest goroutine binds to the request's ctx: when
-// the caller cancels (teardown, failure, or Run returning), ingest
-// exits cleanly. The connection is closed from inside ingest on
-// exit so the pooled socket is released promptly.
+// Two contexts, deliberately not the same one: joinCtx scopes only
+// the synchronous Subscribe dial — it is the errgroup-derived context
+// shared with the other two pre-open ops, and is cancelled the moment
+// Run's preOpenGroup.Wait() returns (i.e. as soon as all three
+// pre-open ops finish, usually under a second in). sessionCtx is
+// Run's own long-lived context and is what the spawned ingest
+// goroutine binds to, so ingest outlives the join and keeps draining
+// the socket into Redis for the life of the session — only exiting
+// when sessionCtx itself is cancelled (teardown, failure, or Run
+// returning) or the connection errors. Binding ingest to joinCtx
+// instead was the bug: it killed the live feed seconds into every
+// session, right as the pre-open join completed. The connection is
+// closed from inside ingest on exit so the pooled socket is released
+// promptly.
 func (runner *Runner) subscribeLive(
-	ctx context.Context,
+	joinCtx context.Context,
+	sessionCtx context.Context,
 	request transport.BringUpRequest,
 	feedSessionID string,
 ) error {
@@ -54,7 +65,7 @@ func (runner *Runner) subscribeLive(
 
 	subscriptions := buildLiveSubscriptionList(request.Instruments, configuredTimeframes)
 
-	connection, connectedFrame, subscribeErr := runner.dependencies.Core.Subscribe(ctx, feedSessionID, subscriptions)
+	connection, connectedFrame, subscribeErr := runner.dependencies.Core.Subscribe(joinCtx, feedSessionID, subscriptions)
 	if subscribeErr != nil {
 		return fmt.Errorf("session: Subscribe on exchange %q: %w", request.ExchangeID, subscribeErr)
 	}
@@ -70,7 +81,9 @@ func (runner *Runner) subscribeLive(
 
 	// The ingest goroutine owns the connection from here. It closes
 	// the socket on exit so the Runner does not have to track it.
-	go runner.runIngest(ctx, request.ExchangeID, connectedFrame.Timezone, connection)
+	// Bound to sessionCtx (not joinCtx) so it survives past the
+	// pre-open join and keeps running for the life of the session.
+	go runner.runIngest(sessionCtx, request.ExchangeID, connectedFrame.Timezone, connection)
 	return nil
 }
 

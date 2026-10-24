@@ -116,6 +116,7 @@ func (client *Client) executeJSONCall(
 			"call_class", class.String(),
 			"status", callErr.HTTPStatus,
 			"reason", callErr.Reason,
+			"message", callErr.Message,
 			"elapsed_ms", elapsed.Milliseconds(),
 		)
 		return callErr

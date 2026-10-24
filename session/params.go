@@ -109,6 +109,13 @@ type Params struct {
 	// done, re-entry); all shape parameters come from here.
 	LifecycleCurve LifecycleCurveParams
 
+	// LiquiditySeeder holds the dumb-operator liquidity-bootstrap
+	// mechanism's calibration — see docs/agents/LIQUIDITY_SEEDER.md.
+	// Runs once per bringup, before the real tick loop's agents start
+	// deciding, so a freshly constructed exchange has a two-sided,
+	// moving book instead of a dead one.
+	LiquiditySeeder LiquiditySeederParams
+
 	// CheckIntervalMin and CheckIntervalMax bound the random interval
 	// each agent waits between recurring lifecycle rolls. A fresh
 	// interval drawn uniformly from [min, max] is re-armed after every
@@ -166,6 +173,55 @@ type LifecycleCurveParams struct {
 	// the give-up sigmoid over idle duration.
 	GiveUpMax float64 // q_max: ceiling of the give-up probability
 	GiveUpTau float64 // τ_give_up: idle-duration time-scale of the give-up rise
+}
+
+// LiquiditySeederParams carries every dial the liquidity-bootstrap
+// mechanism reads — see docs/agents/LIQUIDITY_SEEDER.md. All fields
+// are composition-root calibration placeholders, same discipline as
+// every other Params block; a scenario's intensity further scales
+// SellerCount/BuyerCount/OrderSizeMax (thin → down, busy → up) via
+// the scenario package's own catalogue, not via a separate mechanism
+// here.
+type LiquiditySeederParams struct {
+	// SellerCount and BuyerCount are how many dumb operator identities
+	// get opened per side, per bringup.
+	SellerCount int
+	BuyerCount  int
+
+	// OrderSizeMin/Max bound the per-order quantity each seeder picks
+	// (uniformly) for every punch.
+	OrderSizeMin int64
+	OrderSizeMax int64
+
+	// PivotLevelCount is how many R/S floor-trader pivot levels get
+	// computed around the current price anchor (R1..Rn / S1..Sn).
+	PivotLevelCount int
+
+	// RandomLevelCount is how many additional orders get placed at
+	// random prices within RandomLevelSpreadBps of the anchor, on top
+	// of the pivot levels.
+	RandomLevelCount int
+
+	// RandomLevelSpreadBps bounds the random-level band width, in
+	// basis points of the current anchor price.
+	RandomLevelSpreadBps int64
+
+	// ContinuousFraction is the fraction of the session's real
+	// duration (request.SessionEnd - request.SessionStart) during
+	// which seeders work the levels continuously, every tick. After
+	// that fraction elapses, seeding drops to sparse random top-ups.
+	ContinuousFraction float64
+
+	// ReentryCadenceMin/Max bound the random interval between sparse
+	// top-ups once the continuous phase ends.
+	ReentryCadenceMin time.Duration
+	ReentryCadenceMax time.Duration
+
+	// GenesisOffsetBps anchors price levels off a reference price
+	// (± this offset) when no prior OHLCV bar exists at all — a true
+	// cold canonical start. On-demand never hits this path: it always
+	// has canonical history to pull.
+	GenesisOffsetBps int64
 }
 
 // DefaultPerceptionParams returns the baseline calibration for agent

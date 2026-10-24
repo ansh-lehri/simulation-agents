@@ -523,6 +523,32 @@ func (fake *programmableCoreClientForHistory) JoinOnDemand(ctx context.Context, 
 	return core.OnDemandSessionJoin{}, nil
 }
 
+func (fake *programmableCoreClientForHistory) JoinCanonicalAsOperator(ctx context.Context, operatorUserID, marketTag string) (core.CanonicalSessionJoin, error) {
+	_ = ctx
+	_ = operatorUserID
+	_ = marketTag
+	return core.CanonicalSessionJoin{}, nil
+}
+
+func (fake *programmableCoreClientForHistory) JoinOnDemandAsOperator(ctx context.Context, operatorUserID, exchangeID string) (core.OnDemandSessionJoin, error) {
+	_ = ctx
+	_ = operatorUserID
+	_ = exchangeID
+	return core.OnDemandSessionJoin{}, nil
+}
+
+func (fake *programmableCoreClientForHistory) OpenOperatorAccount(ctx context.Context, operatorUserID string) (string, error) {
+	_ = ctx
+	_ = operatorUserID
+	return "", nil
+}
+
+func (fake *programmableCoreClientForHistory) SeedInventory(ctx context.Context, request core.SeedInventoryRequest) (core.SeedInventoryResponse, error) {
+	_ = ctx
+	_ = request
+	return core.SeedInventoryResponse{}, nil
+}
+
 func (fake *programmableCoreClientForHistory) Subscribe(ctx context.Context, sessionID string, subscriptions []core.MarketDataSubscription) (WSConnection, core.ConnectedFrame, error) {
 	_ = ctx
 	_ = sessionID

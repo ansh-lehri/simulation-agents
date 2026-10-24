@@ -65,14 +65,29 @@ type canonicalSessionJoinRequestUser struct {
 // before trading begins, and tolerates the slack configured in
 // TimeoutConfig.PreOpenCall.
 func (client *Client) JoinCanonical(ctx context.Context, agentUserID, marketTag string) (CanonicalSessionJoin, error) {
-	if agentUserID == "" {
-		return CanonicalSessionJoin{}, fmt.Errorf("core: JoinCanonical requires a non-empty agent user id")
+	return client.joinCanonicalAs(ctx, agentUserID, marketTag, "agent")
+}
+
+// JoinCanonicalAsOperator is JoinCanonical for a liquidity-seeder
+// identity (owner_type "agent_operator") — see
+// docs/agents/LIQUIDITY_SEEDER.md. Sending the wrong owner_type here
+// installs the session on a different account row than the one the
+// seeder's OpenOperatorAccount call already opened (EnsureAccount is
+// keyed by (owner_type, owner_id)), so every later order/seed-inventory
+// call against the seeder's real account 409s "no session".
+func (client *Client) JoinCanonicalAsOperator(ctx context.Context, operatorUserID, marketTag string) (CanonicalSessionJoin, error) {
+	return client.joinCanonicalAs(ctx, operatorUserID, marketTag, "agent_operator")
+}
+
+func (client *Client) joinCanonicalAs(ctx context.Context, userID, marketTag, ownerType string) (CanonicalSessionJoin, error) {
+	if userID == "" {
+		return CanonicalSessionJoin{}, fmt.Errorf("core: JoinCanonical requires a non-empty user id")
 	}
 	if marketTag == "" {
 		return CanonicalSessionJoin{}, fmt.Errorf("core: JoinCanonical requires a non-empty market tag")
 	}
 	requestBody := canonicalSessionJoinRequestEnvelope{
-		User:   canonicalSessionJoinRequestUser{UserID: agentUserID, OwnerType: "agent"},
+		User:   canonicalSessionJoinRequestUser{UserID: userID, OwnerType: ownerType},
 		Market: marketTag,
 	}
 	var responseBody CanonicalSessionJoin
@@ -107,18 +122,23 @@ type OnDemandSessionJoin struct {
 }
 
 // onDemandSessionJoinRequestEnvelope is the JSON body shape POST
-// /session/ondemand/join expects. No owner_type field — this client
-// is the endpoint's only caller, so Core resolves OwnerAgent itself.
+// /session/ondemand/join expects. owner_type is "agent" for real
+// agents (JoinOnDemand) or "agent_operator" for liquidity-seeder
+// identities (JoinOnDemandAsOperator) — Core keys EnsureAccount by
+// (owner_type, owner_id), so sending the wrong one here installs the
+// session on a different account row than the one the caller actually
+// holds, and every later order/seed-inventory call 409s "no session".
 type onDemandSessionJoinRequestEnvelope struct {
 	User       onDemandSessionJoinRequestUser `json:"user"`
 	ExchangeID string                         `json:"exchange_id"`
 }
 
 type onDemandSessionJoinRequestUser struct {
-	UserID string `json:"user_id"`
+	UserID    string `json:"user_id"`
+	OwnerType string `json:"owner_type"`
 }
 
-// JoinOnDemand installs an agent's account on the shard serving an
+// JoinOnDemand installs a real agent's account on the shard serving an
 // already-live on-demand market session and returns the identifiers
 // tied to that install. exchangeID identifies the one on-demand market
 // instance a human's StartOnDemand call already created — this call
@@ -129,14 +149,25 @@ type onDemandSessionJoinRequestUser struct {
 // failure, so a transient failure is reconciled by a fresh state read,
 // never a blind retry.
 func (client *Client) JoinOnDemand(ctx context.Context, agentUserID, exchangeID string) (OnDemandSessionJoin, error) {
-	if agentUserID == "" {
-		return OnDemandSessionJoin{}, fmt.Errorf("core: JoinOnDemand requires a non-empty agent user id")
+	return client.joinOnDemandAs(ctx, agentUserID, exchangeID, "agent")
+}
+
+// JoinOnDemandAsOperator is JoinOnDemand for a liquidity-seeder
+// identity (owner_type "agent_operator") — see
+// docs/agents/LIQUIDITY_SEEDER.md.
+func (client *Client) JoinOnDemandAsOperator(ctx context.Context, operatorUserID, exchangeID string) (OnDemandSessionJoin, error) {
+	return client.joinOnDemandAs(ctx, operatorUserID, exchangeID, "agent")
+}
+
+func (client *Client) joinOnDemandAs(ctx context.Context, userID, exchangeID, ownerType string) (OnDemandSessionJoin, error) {
+	if userID == "" {
+		return OnDemandSessionJoin{}, fmt.Errorf("core: JoinOnDemand requires a non-empty user id")
 	}
 	if exchangeID == "" {
 		return OnDemandSessionJoin{}, fmt.Errorf("core: JoinOnDemand requires a non-empty exchange id")
 	}
 	requestBody := onDemandSessionJoinRequestEnvelope{
-		User:       onDemandSessionJoinRequestUser{UserID: agentUserID},
+		User:       onDemandSessionJoinRequestUser{UserID: userID, OwnerType: ownerType},
 		ExchangeID: exchangeID,
 	}
 	var responseBody OnDemandSessionJoin

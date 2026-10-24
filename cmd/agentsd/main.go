@@ -159,9 +159,7 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("agentsd: build capital resolver: %w", err)
 	}
 
-	// Build the per-exchange session runner. The scheduler stub is
-	// a logging no-op this phase; the real tick loop replaces it
-	// later with no caller change here. The core-client adapter
+	// Build the per-exchange session runner. The core-client adapter
 	// below bridges *core.Client's concrete WS return type into
 	// session.WSConnection so the runner can hold the interface.
 	//
@@ -172,10 +170,14 @@ func run(logger *slog.Logger) error {
 	// pointer is nil at construction and gets patched below once
 	// the orchestrator is built; no bring-up can fire in that
 	// window because the server has not yet been started.
-	sessionScheduler, err := session.NewNoOpScheduler(logger)
-	if err != nil {
-		return fmt.Errorf("agentsd: build session scheduler stub: %w", err)
-	}
+	sessionScheduler := session.NewLiveScheduler(
+		&sessionCoreClientAdapter{inner: coreClient},
+		runtimeStore,
+		marketDataStore,
+		defaultSessionParams(orchestratorConfig.CapitalParams.DefaultFundedCash),
+		logger,
+		orchestrator.NewFreshEntropySource(),
+	)
 	orchestratorFailureAdapter := &orchestratorFailureReporterAdapter{}
 	sessionRunner, err := session.NewRunner(session.Dependencies{
 		Core:       &sessionCoreClientAdapter{inner: coreClient},

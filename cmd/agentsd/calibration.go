@@ -36,7 +36,13 @@ const baselineScenarioSeed uint64 = 1
 // 10/50) and are soft placeholders everywhere else.
 func defaultGenParams() generator.GenParams {
 	return generator.GenParams{
-		HerdProbability: 0.1,
+		// HerdProbability is 0 for now — the decision package has no
+		// herd-agent decide path yet (session.decide() routes every
+		// flat agent into decision.Decide, which panics on a nil
+		// Disposition/Perception; herd agents never have either by
+		// design). Minting zero herd agents sidesteps the crash until
+		// that path is built. Revert to a nonzero value once it is.
+		HerdProbability: 0,
 
 		SkillBeta:          generator.BetaPair{Alpha: 2, Beta: 2},
 		AggressivenessBeta: generator.BetaPair{Alpha: 2, Beta: 2},
@@ -44,7 +50,15 @@ func defaultGenParams() generator.GenParams {
 		PActBeta:           generator.BetaPair{Alpha: 2, Beta: 5},
 		ActProbBeta:        generator.BetaPair{Alpha: 2, Beta: 2},
 
-		CapitalSizeLogNormal: generator.LogNormalPair{Mu: 10, Sigma: 1},
+		// CapitalSizeLogNormal.Mu raised from 10 to 13 (median
+		// capital_size ~e^13≈442k, was ~e^10≈22k) — at SYNTH_DEF's
+		// observed price scale (~49k ticks/unit), a 22k median capital
+		// combined with MaxFrac=0.2 meant essentially no agent could
+		// ever afford even one share (verified: <0.1% of draws clear
+		// qty>=1 at realistic conviction). This value is unrelated to
+		// instrument price scale, which is fixed — it only resizes the
+		// capital distribution to be workable against it.
+		CapitalSizeLogNormal: generator.LogNormalPair{Mu: 13, Sigma: 1},
 
 		DispositionDirichletAlphas:  generator.DispositionAlphas{Trend: 1, MeanReversion: 1, Noise: 1},
 		DietOptionalFlagProbability: 0.5,
@@ -179,7 +193,10 @@ func defaultDecisionParams() decision.Params {
 		},
 		ThetaAddMargin: 0.1,
 
-		MaxFrac:     0.2,
+		// MaxFrac raised from 0.2 to 0.35 alongside the capital-size
+		// bump above — see that comment for why; the two dials were
+		// tuned together against SYNTH_DEF's observed price scale.
+		MaxFrac:     0.35,
 		Gamma:       0.5,
 		ThetaMarket: 0.7,
 		KPlace:      0.5,
@@ -196,12 +213,20 @@ func defaultDecisionParams() decision.Params {
 // know about the scenario package.
 func defaultOrchestratorConfig() orchestrator.OrchestratorConfig {
 	return orchestrator.OrchestratorConfig{
-		PopulationSize:  100,
+		PopulationSize:  5,
 		LifecycleBuffer: 64,
 		CapitalParams: agent.CapitalParams{
-			Floor:             1_000,
-			JitterSpread:      0.1,
-			DefaultFundedCash: 100_000,
+			Floor:        1_000,
+			JitterSpread: 0.1,
+			// DefaultFundedCash raised from 100k to 500k to stay in
+			// the same ballpark as the new-agent ceiling (funded_cash
+			// read from Core, observed ~1,000,000) now that capital
+			// scale has been resized against SYNTH_DEF's price — see
+			// CapitalSizeLogNormal/MaxFrac comments above. Only
+			// matters for on-demand existing (leased) agents or a
+			// non-positive funded_cash read; today's population is
+			// all-new, so this isn't the active ceiling yet.
+			DefaultFundedCash: 500_000,
 		},
 	}
 }
