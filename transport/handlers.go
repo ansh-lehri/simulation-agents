@@ -1,9 +1,11 @@
 package transport
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 )
 
 // errorEnvelope is the response body shape used on any non-success status.
@@ -56,7 +58,13 @@ func (server *Server) handleWindDown(writer http.ResponseWriter, httpRequest *ht
 		server.writeError(writer, http.StatusBadRequest, "invalid wind-down request", err)
 		return
 	}
-	if err := server.orchestrator.WindDown(httpRequest.Context(), wire.ExchangeID, wire.TeardownMode); err != nil {
+	// Detach from the HTTP request context: the conductor's client-side
+	// timeout (joinTimeout=5s) may close the connection before lease release
+	// for a large population completes. Use a background context with a
+	// generous ceiling so cleanup always finishes regardless of the caller.
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelCleanup()
+	if err := server.orchestrator.WindDown(cleanupCtx, wire.ExchangeID, wire.TeardownMode); err != nil {
 		server.writeError(writer, http.StatusInternalServerError, "wind-down failed", err)
 		return
 	}
