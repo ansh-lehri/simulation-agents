@@ -85,6 +85,23 @@ func (walStore *RedisPendingMintWAL) Clear(ctx context.Context, agentID agent.Ag
 	return nil
 }
 
+// ClearBatch removes all staged entries for the given ids in a single
+// HDel call (one network roundtrip). Clearing a field that was never
+// staged or already cleared is a no-op per the Redis HDEL contract.
+func (walStore *RedisPendingMintWAL) ClearBatch(ctx context.Context, agentIDs []agent.AgentID) error {
+	if len(agentIDs) == 0 {
+		return nil
+	}
+	fields := make([]string, len(agentIDs))
+	for i, agentID := range agentIDs {
+		fields[i] = string(agentID)
+	}
+	if err := walStore.client.HDel(ctx, PendingMintKey(), fields...).Err(); err != nil {
+		return fmt.Errorf("store: clear batch pending mints (%d agents): %w", len(agentIDs), err)
+	}
+	return nil
+}
+
 // Drain stub — execution lives in the crash-recovery phase.
 func (walStore *RedisPendingMintWAL) Drain(ctx context.Context) ([]StageRecord, error) {
 	_ = ctx

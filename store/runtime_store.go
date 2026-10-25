@@ -200,6 +200,30 @@ func (redisStore *RedisRuntimeStore) WriteInitialSnapshot(ctx context.Context, e
 	return nil
 }
 
+// WriteInitialSnapshotBatch pipelines one HSet per agent in a single
+// network roundtrip. Each agent gets its own key so there is no conflict
+// between agents; pipelining batches the writes without changing any
+// individual key's semantics.
+func (redisStore *RedisRuntimeStore) WriteInitialSnapshotBatch(ctx context.Context, exchangeID string, agents []agent.Agent) error {
+	if len(agents) == 0 {
+		return nil
+	}
+	_, err := redisStore.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, agentRecord := range agents {
+			key := RuntimeKey(exchangeID, agentRecord.ID)
+			pipe.HSet(ctx, key,
+				FieldPresence, PresenceDormant,
+				FieldTradingCapital, strconv.FormatInt(agentRecord.TradingCapital, 10),
+			)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("store: write initial snapshot batch (%d agents) on %s: %w", len(agents), exchangeID, err)
+	}
+	return nil
+}
+
 func (redisStore *RedisRuntimeStore) SetPresence(ctx context.Context, exchangeID string, agentID agent.AgentID, presence string) error {
 	key := RuntimeKey(exchangeID, agentID)
 	if err := redisStore.client.HSet(ctx, key, FieldPresence, presence).Err(); err != nil {
