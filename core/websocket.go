@@ -104,6 +104,27 @@ func (connection *WebSocketConnection) Close() error {
 	return connection.socket.Close()
 }
 
+// WriteSubscribe sends a fresh subscribe frame on an already-established
+// connection. Used by the ingest goroutine to retry subscriptions that
+// received an "unknown instrument" ack — the instrument may not have been
+// tape-learned at the time of the original subscribe but becomes known
+// once the first order lands in the exchange.
+//
+// The caller is responsible for ensuring no other goroutine writes to
+// this connection concurrently (gorilla: one concurrent writer only).
+func (connection *WebSocketConnection) WriteSubscribe(subscriptions []MarketDataSubscription) error {
+	if connection.closed.Load() {
+		return fmt.Errorf("core: WriteSubscribe on closed connection")
+	}
+	frame := buildSubscribeFrame(subscriptions)
+	_ = connection.socket.SetWriteDeadline(time.Now().Add(subscribeWriteBudget))
+	if err := connection.socket.WriteJSON(frame); err != nil {
+		return fmt.Errorf("core: WriteSubscribe: %w", err)
+	}
+	_ = connection.socket.SetWriteDeadline(time.Time{})
+	return nil
+}
+
 // Subscribe dials the market-data WebSocket for sessionID, consumes
 // the mandatory ConnectedFrame server greeting, writes exactly one
 // subscribe frame carrying the provided subscriptions, and returns

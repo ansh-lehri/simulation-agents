@@ -101,11 +101,14 @@ type CoreClient interface {
 
 // WSConnection is the connection-handle shape the Runner consumes
 // from a Subscribe call: ReadFrame drives the ingest loop; Close
-// releases the socket at teardown. The real *core.WebSocketConnection
-// satisfies these two methods directly; the composition-root adapter
-// returns it typed as WSConnection so tests can inject a fake socket.
+// releases the socket at teardown; WriteSubscribe lets the ingest
+// goroutine retry subscriptions that were nacked with "unknown
+// instrument". The real *core.WebSocketConnection satisfies all three
+// methods directly; the composition-root adapter returns it typed as
+// WSConnection so tests can inject a fake socket.
 type WSConnection interface {
 	ReadFrame(ctx context.Context) (core.IncomingFrame, error)
+	WriteSubscribe(subscriptions []core.MarketDataSubscription) error
 	Close() error
 }
 

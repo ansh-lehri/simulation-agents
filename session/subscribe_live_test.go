@@ -355,6 +355,32 @@ func (connection *fakeWSConnection) ReadFrame(ctx context.Context) (core.Incomin
 	}
 }
 
+func (connection *fakeWSConnection) WriteSubscribe(subscriptions []core.MarketDataSubscription) error {
+	select {
+	case <-connection.closedChannel:
+		return errors.New("fakeWSConnection: WriteSubscribe on closed connection")
+	default:
+	}
+	connection.frames <- core.IncomingFrame{
+		Kind: core.IncomingFrameKindAck,
+		Ack: &core.AckFrame{
+			Results: func() []core.AckResult {
+				results := make([]core.AckResult, len(subscriptions))
+				for i, sub := range subscriptions {
+					results[i] = core.AckResult{
+						Stream:     sub.Stream,
+						Instrument: sub.Instrument,
+						Timeframe:  sub.Timeframe,
+						Status:     core.SubscriptionAckStatusOK,
+					}
+				}
+				return results
+			}(),
+		},
+	}
+	return nil
+}
+
 func (connection *fakeWSConnection) Close() error {
 	connection.closedOnce.Do(func() { close(connection.closedChannel) })
 	return nil

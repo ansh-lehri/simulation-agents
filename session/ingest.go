@@ -10,6 +10,52 @@ import (
 	"simulation-agents/store"
 )
 
+const (
+	// defaultSubscribeMaxRetries is used when Params.SubscribeMaxRetries is
+	// zero. 12 attempts gives ~60 s of retry window at the default interval,
+	// enough for the liquidity seeder to place its first orders and tape-learn
+	// the instrument regardless of pre-open delay.
+	defaultSubscribeMaxRetries = 12
+
+	// defaultSubscribeRetryInterval is the wait between consecutive retries
+	// when Params.SubscribeRetryInterval is zero.
+	defaultSubscribeRetryInterval = 5 * time.Second
+
+	// retryWriteBuffer is the depth of the channel from retry goroutines to
+	// the sole-writer goroutine. Sized to hold one retry burst per instrument
+	// without blocking the sleeping retry goroutines.
+	retryWriteBuffer = 32
+)
+
+// subscribeRetryKey identifies one subscription slot for retry tracking.
+type subscribeRetryKey struct {
+	stream     string
+	instrument string
+	timeframe  string
+}
+
+// subscribeRetryState tracks how many times each subscription slot has been
+// retried. Not goroutine-safe — only the ingest goroutine mutates it.
+type subscribeRetryState struct {
+	counts   map[subscribeRetryKey]int
+	maxTries int
+	interval time.Duration
+}
+
+func newSubscribeRetryState(maxRetries int, interval time.Duration) *subscribeRetryState {
+	if maxRetries <= 0 {
+		maxRetries = defaultSubscribeMaxRetries
+	}
+	if interval <= 0 {
+		interval = defaultSubscribeRetryInterval
+	}
+	return &subscribeRetryState{
+		counts:   make(map[subscribeRetryKey]int),
+		maxTries: maxRetries,
+		interval: interval,
+	}
+}
+
 // runIngest is the long-lived WebSocket consumer. One goroutine per
 // exchange. Its job is simple: block on ReadFrame, route each
 // decoded frame to the right market-data write, and exit cleanly
@@ -22,9 +68,15 @@ import (
 // loop. The ingest closes the connection on exit so the socket is
 // released even on the ctx-cancel path.
 //
-// SessionClosed-style teardown hooks (write a wind-down marker,
-// drain the lease, etc) are the resilience layer's job; this
-// Phase-5 loop only cares about frames and clean exit.
+// Retry policy for "unknown instrument" acks: the exchange does not
+// tape-learn an instrument until the first quote or trade arrives,
+// which only happens after the first order. The liquidity seeder places
+// its first orders at SessionStart; agents subscribe during pre-open,
+// before that point. A dedicated sole-writer goroutine re-sends the
+// subscribe frame for each failed slot after SubscribeRetryInterval,
+// up to SubscribeMaxRetries times. On exhaustion the slot is abandoned
+// and an error is logged — the session continues without live quotes
+// for that instrument.
 func (runner *Runner) runIngest(
 	ctx context.Context,
 	exchangeID string,
@@ -40,6 +92,18 @@ func (runner *Runner) runIngest(
 			)
 		}
 	}()
+
+	// Sole-writer goroutine. All writes to the socket — retry subscribe
+	// frames — are funnelled here so no two goroutines write concurrently
+	// (gorilla: one concurrent writer per connection). writeCh is never
+	// closed; the goroutine exits on ctx.Done().
+	writeCh := make(chan []core.MarketDataSubscription, retryWriteBuffer)
+	go runner.runIngestWriter(ctx, exchangeID, connection, writeCh)
+
+	retryState := newSubscribeRetryState(
+		runner.dependencies.Params.SubscribeMaxRetries,
+		runner.dependencies.Params.SubscribeRetryInterval,
+	)
 
 	for {
 		frame, readErr := connection.ReadFrame(ctx)
@@ -59,20 +123,50 @@ func (runner *Runner) runIngest(
 			}
 			return
 		}
-		runner.handleIncomingFrame(ctx, exchangeID, marketTimezoneName, frame)
+		runner.handleIncomingFrame(ctx, exchangeID, marketTimezoneName, frame, writeCh, retryState)
+	}
+}
+
+// runIngestWriter is the sole-writer goroutine for the ingest connection.
+// It drains writeCh and calls WriteSubscribe for each batch. Exits when
+// ctx is done or a write fails (the socket is in a bad state; the reader
+// will see the error on the next ReadFrame and exit too).
+func (runner *Runner) runIngestWriter(
+	ctx context.Context,
+	exchangeID string,
+	connection WSConnection,
+	writeCh <-chan []core.MarketDataSubscription,
+) {
+	for {
+		select {
+		case subs := <-writeCh:
+			if err := connection.WriteSubscribe(subs); err != nil {
+				runner.dependencies.Logger.Warn(
+					"session: ingest retry write failed, writer exiting",
+					"exchange_id", exchangeID,
+					"err", err,
+				)
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
 // handleIncomingFrame routes one decoded frame to the right market-
-// data write. Logging-only on ack / connected / unknown — those
-// carry no cacheable state. Per-frame write failures are logged
-// and swallowed; the loop never fails a session for a single bad
-// market-data frame.
+// data write. Logging-only on connected / unknown — those carry no
+// cacheable state. Per-frame write failures are logged and swallowed;
+// the loop never fails a session for a single bad market-data frame.
+// Ack frames with "unknown instrument" errors schedule a retry via
+// the retry state and the sole-writer channel.
 func (runner *Runner) handleIncomingFrame(
 	ctx context.Context,
 	exchangeID string,
 	marketTimezoneName string,
 	frame core.IncomingFrame,
+	writeCh chan<- []core.MarketDataSubscription,
+	retryState *subscribeRetryState,
 ) {
 	switch frame.Kind {
 	case core.IncomingFrameKindSnapshot:
@@ -120,7 +214,17 @@ func (runner *Runner) handleIncomingFrame(
 			return
 		}
 		for _, ackResult := range frame.Ack.Results {
-			if ackResult.Status != core.SubscriptionAckStatusOK {
+			if ackResult.Status == core.SubscriptionAckStatusOK {
+				runner.dependencies.Logger.Info(
+					"session: subscription ack ok",
+					"exchange_id", exchangeID,
+					"stream", ackResult.Stream,
+					"instrument", ackResult.Instrument,
+					"timeframe", ackResult.Timeframe,
+				)
+				continue
+			}
+			if ackResult.Error != "unknown instrument" {
 				runner.dependencies.Logger.Warn(
 					"session: subscribe ack returned error",
 					"exchange_id", exchangeID,
@@ -129,7 +233,61 @@ func (runner *Runner) handleIncomingFrame(
 					"status", ackResult.Status,
 					"error", ackResult.Error,
 				)
+				continue
 			}
+			// "unknown instrument": the instrument is not yet tape-learned.
+			// Schedule a retry if we have attempts remaining.
+			key := subscribeRetryKey{
+				stream:     ackResult.Stream,
+				instrument: ackResult.Instrument,
+				timeframe:  ackResult.Timeframe,
+			}
+			retryState.counts[key]++
+			attempt := retryState.counts[key]
+
+			if attempt > retryState.maxTries {
+				runner.dependencies.Logger.Error(
+					"session: subscribe retry exhausted, giving up on instrument",
+					"exchange_id", exchangeID,
+					"stream", ackResult.Stream,
+					"instrument", ackResult.Instrument,
+					"timeframe", ackResult.Timeframe,
+					"attempts", attempt,
+					"max_retries", retryState.maxTries,
+				)
+				continue
+			}
+
+			runner.dependencies.Logger.Info(
+				"session: subscription unknown instrument, scheduling retry",
+				"exchange_id", exchangeID,
+				"stream", ackResult.Stream,
+				"instrument", ackResult.Instrument,
+				"timeframe", ackResult.Timeframe,
+				"attempt", attempt,
+				"max_retries", retryState.maxTries,
+				"retry_in", retryState.interval,
+			)
+
+			retrySub := core.MarketDataSubscription{
+				Stream:     ackResult.Stream,
+				Instrument: ackResult.Instrument,
+				Timeframe:  ackResult.Timeframe,
+			}
+			retryInterval := retryState.interval
+			go func(sub core.MarketDataSubscription) {
+				timer := time.NewTimer(retryInterval)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+					select {
+					case writeCh <- []core.MarketDataSubscription{sub}:
+					case <-ctx.Done():
+					}
+				case <-ctx.Done():
+				}
+			}(retrySub)
+
 		}
 	case core.IncomingFrameKindConnected:
 		// Core re-emits connected only on the initial handshake,

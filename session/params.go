@@ -60,6 +60,19 @@ type Params struct {
 	// indefinitely.
 	AckReadTimeout time.Duration
 
+	// SubscribeMaxRetries is the number of times the ingest goroutine
+	// will re-send a subscribe frame for a subscription that was nacked
+	// with "unknown instrument". The instrument is not tape-learned until
+	// the first order lands in the exchange; retries give the liquidity
+	// seeder time to place its first orders and make the instrument
+	// visible. Zero disables retries. Defaults to 12 if unset (0).
+	SubscribeMaxRetries int
+
+	// SubscribeRetryInterval is the wait between consecutive retry
+	// attempts for a nacked subscription. Zero falls back to
+	// defaultSubscribeRetryInterval (5 seconds).
+	SubscribeRetryInterval time.Duration
+
 	// TAction is the floor duration between action ticks. The
 	// scheduler sleeps at least this long between consecutive
 	// action phases; heavy ticks that exceed it chain immediately.
