@@ -37,7 +37,7 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		// bars (vs. 1 at the old 1h window) — accepted for now,
 		// revisit if bring-up latency becomes a problem.
 		HistoryLookback:         20 * 24 * time.Hour,
-		LoadSessionsConcurrency: 300,
+		LoadSessionsConcurrency: 100,
 		OnDemandSessionDuration: 30 * time.Minute,
 		AckReadTimeout:          5 * time.Second,
 		HistoryTimeframes:       []string{core.TimeframeOneMinute},
@@ -55,9 +55,10 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		// comfortably absorb one action tick's worth of punches for
 		// the default PopulationSize (100) without the act-coin gate
 		// needing every agent to fire for the channel to fill.
-		TAction:     1 * time.Second,
-		TPresence:   30 * time.Second,
-		PunchBuffer: 32,
+		TAction:          1 * time.Second,
+		TPresence:        30 * time.Second,
+		PunchBuffer:      2000,
+		DispatcherWorkers: 50,
 		// LiquiditySeeder — see docs/agents/LIQUIDITY_SEEDER.md.
 		// Calibration placeholders like every other dial here: 3
 		// sellers + 3 buyers, orders sized 5-20 units, 3 pivot levels

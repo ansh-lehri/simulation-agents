@@ -69,7 +69,13 @@ func (sched *LiveScheduler) StartScheduler(
 	ws := sched.buildWorkingSet(ctx, request, population)
 	curves := buildLifecycleCurves(curveEffective, sched.params.LifecycleCurve, ws.sessionRNG)
 	punchCh := make(chan core.OrderPunchRequest, sched.params.PunchBuffer)
-	go sched.runDispatcher(ctx, request.ExchangeID, punchCh)
+	workers := sched.params.DispatcherWorkers
+	if workers <= 0 {
+		workers = 1
+	}
+	for range workers {
+		go sched.runDispatcher(ctx, request.ExchangeID, punchCh)
+	}
 	sched.runLoop(ctx, request, ws, curves, punchCh, lifecycleChannel)
 
 	if request.SessionType == agent.PopulationCanonical {
