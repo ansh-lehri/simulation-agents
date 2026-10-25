@@ -257,7 +257,15 @@ func resolveTypeAndPrice(
 
 	bestBid, bestAsk, twoSidedBook := acc.bestBidAsk(instrument)
 	if !twoSidedBook {
-		return "", 0, 0, false
+		// Limit-price placement requires both best bid and ask to compute
+		// depthIntoSpread × spread. When the book is one-sided or empty,
+		// fall back to a market IOC rather than skipping the agent entirely.
+		// The design assumed the seeder always keeps a two-sided book; in
+		// practice seeder GTC orders cross each other immediately, draining
+		// the book between pulses. An IOC on an empty book cancels cleanly;
+		// an IOC on a one-sided book fills at the available price — both are
+		// better than permanently silencing a limit-personality agent.
+		return core.OrderTypeMarket, 0, 0, true
 	}
 
 	spread = bestAsk - bestBid

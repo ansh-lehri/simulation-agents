@@ -183,7 +183,19 @@ func (runner *Runner) installRemainingAgents(
 		fanOutWaitGroup.Add(1)
 		go func() {
 			defer fanOutWaitGroup.Done()
-			semaphore <- struct{}{}
+			// Context-aware semaphore acquire: if the bringup context is
+			// cancelled (e.g. timeout or a fatal failure in pullHistory or
+			// subscribeLive), release immediately rather than blocking
+			// thousands of goroutines waiting for a slot. The error is
+			// stored so the post-wait collector can mark the agent failed.
+			select {
+			case semaphore <- struct{}{}:
+			case <-ctx.Done():
+				resultsByAgentID.Store(agentRecord.ID, installResult{
+					installError: fmt.Errorf("session: installRemainingAgents context cancelled before acquire: %w", ctx.Err()),
+				})
+				return
+			}
 			defer func() { <-semaphore }()
 			sessionID, installErr := runner.installOneAgent(ctx, request, string(agentRecord.ID))
 			resultsByAgentID.Store(agentRecord.ID, installResult{
