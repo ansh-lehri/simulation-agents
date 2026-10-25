@@ -156,22 +156,42 @@ func (runner *Runner) handleIncomingFrame(
 }
 
 // convertSnapshotToStoreQuote collapses the whole-picture snapshot
-// into the two-sided quote the cache stores. The HasBid / HasAsk
-// gates on the source are honored — a side with no resting liquidity
-// is written as zero price and zero quantity rather than carried
-// into the cache as a ghost side.
+// into the two-sided quote the cache stores. All gate flags (HasBid,
+// HasAsk, HasLast) are forwarded from the source — a side with no
+// resting liquidity is written with HasBid/HasAsk=false so accessors
+// downstream correctly report no two-sided book. Depth, Phase, and
+// LastPrice are copied unconditionally so every derived signal
+// (Spread, Imbalance, DepthQty, Phase, CurrentPrice) reads live state.
 func convertSnapshotToStoreQuote(
 	snapshotData core.SnapshotFrameData,
 	observedAt time.Time,
 ) store.Quote {
-	quote := store.Quote{Timestamp: observedAt.UnixMilli()}
+	quote := store.Quote{
+		Timestamp: observedAt.UnixMilli(),
+		Phase:     snapshotData.Phase,
+		HasLast:   snapshotData.HasLast,
+		LastPrice: snapshotData.LastPrice,
+	}
 	if snapshotData.Quote.HasBid {
+		quote.HasBid = true
 		quote.BidPrice = snapshotData.Quote.BestBid
 		quote.BidQty = snapshotData.Quote.BidQty
 	}
 	if snapshotData.Quote.HasAsk {
+		quote.HasAsk = true
 		quote.AskPrice = snapshotData.Quote.BestAsk
 		quote.AskQty = snapshotData.Quote.AskQty
+	}
+	if len(snapshotData.Depth.Bids) > 0 || len(snapshotData.Depth.Asks) > 0 {
+		bids := make([]store.QuoteLevel, len(snapshotData.Depth.Bids))
+		for depthIndex, depthLevel := range snapshotData.Depth.Bids {
+			bids[depthIndex] = store.QuoteLevel{Price: depthLevel.Price, Qty: depthLevel.Qty}
+		}
+		asks := make([]store.QuoteLevel, len(snapshotData.Depth.Asks))
+		for depthIndex, depthLevel := range snapshotData.Depth.Asks {
+			asks[depthIndex] = store.QuoteLevel{Price: depthLevel.Price, Qty: depthLevel.Qty}
+		}
+		quote.Depth = store.QuoteDepth{Bids: bids, Asks: asks}
 	}
 	return quote
 }

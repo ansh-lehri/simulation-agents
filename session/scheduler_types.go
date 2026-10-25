@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"log/slog"
 	"math/rand/v2"
 	"time"
 
@@ -219,6 +220,11 @@ func decide(input decideInput) (core.OrderPunchRequest, bool) {
 	}
 	obs, err := input.observe()
 	if err != nil {
+		slog.Warn("session: decide: observe failed, skipping agent this tick",
+			"capital_handle", input.agentState.capitalHandle,
+			"tick", input.tick.TickIndex,
+			"err", err,
+		)
 		return core.OrderPunchRequest{}, false
 	}
 
@@ -232,16 +238,19 @@ func decide(input decideInput) (core.OrderPunchRequest, bool) {
 
 	candidates := make([]decision.InstrumentCandidate, 0, len(input.market.instruments))
 	for _, inst := range input.market.instruments {
-		// if !acc.Present(inst) {
-		// 	continue
-		// }
 		// Present(inst) only checks for a live WS quote. On a freshly
 		// constructed market (on-demand), no quote exists until a
 		// trade prints, but no trade can print if every instrument is
 		// skipped before anyone considers it — a permanent deadlock.
 		// CurrentPrice falls back to the last candle close when no
 		// quote is present, so gate on "any price at all" instead.
-		if _, priceOK := acc.CurrentPrice(inst, tf); !priceOK {
+		currentPrice, priceOK := acc.CurrentPrice(inst, tf)
+		if !priceOK {
+			slog.Debug("session: decide: no current price, skipping instrument",
+				"capital_handle", input.agentState.capitalHandle,
+				"instrument", inst,
+				"tick", input.tick.TickIndex,
+			)
 			continue
 		}
 
@@ -275,13 +284,7 @@ func decide(input decideInput) (core.OrderPunchRequest, bool) {
 
 		var outcome decision.NodeOutcome
 		if holding {
-			currentPrice, priceOK := acc.CurrentPrice(inst, tf)
 			if !priceOK {
-				// No derivable price this tick even though a quote key
-				// is present (e.g. no trade has ever printed and no
-				// candle exists yet) — 4d has nothing to mark or
-				// evaluate triggers against, so this instrument sits
-				// out this tick. Perception above already ran.
 				continue
 			}
 			outcome = decision.Manage(decision.ManageInput{
@@ -295,6 +298,12 @@ func decide(input decideInput) (core.OrderPunchRequest, bool) {
 				RNG:             input.agentState.agentRNG,
 				Params:          input.decisionParams,
 			})
+			slog.Debug("session: decide: manage outcome",
+				"capital_handle", input.agentState.capitalHandle,
+				"instrument", inst,
+				"tick", input.tick.TickIndex,
+				"has_candidate", outcome.Candidate != nil,
+			)
 		} else {
 			outcome = decision.Decide(decision.DecideInput{
 				Bundle:              bundle,
@@ -311,6 +320,13 @@ func decide(input decideInput) (core.OrderPunchRequest, bool) {
 				RNG:                 input.agentState.agentRNG,
 				Params:              input.decisionParams,
 			})
+			slog.Debug("session: decide: flat outcome",
+				"capital_handle", input.agentState.capitalHandle,
+				"instrument", inst,
+				"tick", input.tick.TickIndex,
+				"has_candidate", outcome.Candidate != nil,
+				"standing_stance", mem.standingStance,
+			)
 		}
 
 		// Assessment applies now, for every traversed instrument, win
@@ -324,6 +340,11 @@ func decide(input decideInput) (core.OrderPunchRequest, bool) {
 	}
 
 	if len(candidates) == 0 {
+		slog.Debug("session: decide: no candidates after traversal",
+			"capital_handle", input.agentState.capitalHandle,
+			"tick", input.tick.TickIndex,
+			"instruments_checked", len(input.market.instruments),
+		)
 		return core.OrderPunchRequest{}, false
 	}
 	winner := decision.ResolveOnePunch(candidates, input.agentState.agentRNG)
@@ -343,8 +364,27 @@ func decide(input decideInput) (core.OrderPunchRequest, bool) {
 		input.decisionParams,
 	)
 	if !ok {
+		slog.Debug("session: decide: execute declined candidate",
+			"capital_handle", input.agentState.capitalHandle,
+			"instrument", winner.Instrument,
+			"tick", input.tick.TickIndex,
+			"conviction", winner.Outcome.Candidate.Conviction,
+			"direction", winner.Outcome.Candidate.Direction,
+			"trading_capital", input.agentState.tradingCapital,
+			"aggressiveness", input.agentState.traits.Aggressiveness,
+		)
 		return core.OrderPunchRequest{}, false
 	}
+
+	slog.Info("session: decide: order ready to punch",
+		"capital_handle", input.agentState.capitalHandle,
+		"instrument", winner.Instrument,
+		"tick", input.tick.TickIndex,
+		"side", req.Side,
+		"type", req.Type,
+		"qty", req.Qty,
+		"limit_price", req.LimitPrice,
+	)
 
 	// Commitment applies only now: resolution has already picked the
 	// one instrument whose order the seam actually allows, and 4c has

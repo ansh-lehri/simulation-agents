@@ -254,6 +254,19 @@ func (sched *LiveScheduler) runActionPhase(ctx context.Context, ws *workingSet, 
 	view := sched.snapshot(ctx, ws)
 	batch := make([]core.OrderPunchRequest, 0, len(ws.active))
 	actedCount := 0
+
+	// Collect per-instrument quote diagnostics once per tick for the warn path.
+	quoteDiag := make(map[string]string, len(ws.instruments))
+	for _, inst := range ws.instruments {
+		if q, ok := view.quote[inst]; ok {
+			quoteDiag[inst+"_has_bid"] = boolStr(q.HasBid)
+			quoteDiag[inst+"_has_ask"] = boolStr(q.HasAsk)
+			quoteDiag[inst+"_has_last"] = boolStr(q.HasLast)
+		} else {
+			quoteDiag[inst+"_quote"] = "absent"
+		}
+	}
+
 	for _, agentRecord := range ws.active {
 		if ws.sessionRNG.Float64() >= agentRecord.traits.PAct {
 			continue
@@ -284,12 +297,29 @@ func (sched *LiveScheduler) runActionPhase(ctx context.Context, ws *workingSet, 
 			"punch_count", len(batch),
 		)
 	}
-	if actedCount > 0 && len(batch) == 0 && !anyInstrumentHasPrice(view, sched.params.ConfiguredTimeframes) {
-		sched.logger.Warn("session: no instrument has any price (live quote or candle) yet — agents cannot trade",
-			"exchange_id", ws.exchangeID,
-			"tick_index", tick.TickIndex,
-			"instruments", ws.instruments,
-		)
+	if actedCount > 0 && len(batch) == 0 {
+		hasPrice := anyInstrumentHasPrice(view, sched.params.ConfiguredTimeframes)
+		if !hasPrice {
+			sched.logger.Warn("session: no instrument has any price (live quote or candle) yet — agents cannot trade",
+				"exchange_id", ws.exchangeID,
+				"tick_index", tick.TickIndex,
+				"instruments", ws.instruments,
+			)
+		} else {
+			// Agents acted but produced nothing. Log quote flags every 10 ticks
+			// so operators can see whether HasBid/HasAsk/HasLast are populated.
+			if tick.TickIndex%10 == 0 {
+				diagArgs := []any{
+					"exchange_id", ws.exchangeID,
+					"tick_index", tick.TickIndex,
+					"acted_count", actedCount,
+				}
+				for k, v := range quoteDiag {
+					diagArgs = append(diagArgs, k, v)
+				}
+				slog.Info("session: agents acted but no order produced — quote flag snapshot", diagArgs...)
+			}
+		}
 	}
 	ws.sessionRNG.Shuffle(len(batch), func(i, j int) { batch[i], batch[j] = batch[j], batch[i] })
 	for _, req := range batch {
@@ -395,4 +425,14 @@ func earliestTime(firstTime, secondTime time.Time) time.Time {
 		return firstTime
 	}
 	return secondTime
+}
+
+// boolStr renders a bool as "true"/"false" for use in structured log
+// key-value pairs where the key is dynamic (slog attribute maps do not
+// accept raw bool without a type-assertion detour).
+func boolStr(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
 }
