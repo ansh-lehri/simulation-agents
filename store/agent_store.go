@@ -19,6 +19,7 @@ type Querier interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
 }
 
 // AgentStore is the narrow contract over the durable agents table.
@@ -67,6 +68,13 @@ func NewPostgresAgentStore(querier Querier) *PostgresAgentStore {
 const agentColumns = `agent_id, population, country, capital_handle, trading_capital,
 	traits, traits_version, traits_updated_at, origin, retired_at`
 
+const insertAgentSQL = `
+	INSERT INTO agents (
+		agent_id, population, country, capital_handle, trading_capital,
+		traits, traits_version, traits_updated_at, origin, retired_at
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	ON CONFLICT (agent_id) DO NOTHING`
+
 func (agentStore *PostgresAgentStore) InsertAgent(ctx context.Context, agentRecord agent.Agent) error {
 	traitsJSON, err := json.Marshal(agentRecord.Traits)
 	if err != nil {
@@ -84,14 +92,7 @@ func (agentStore *PostgresAgentStore) InsertAgent(ctx context.Context, agentReco
 		tradingCapital = &persisted
 	}
 
-	const insertSQL = `
-		INSERT INTO agents (
-			agent_id, population, country, capital_handle, trading_capital,
-			traits, traits_version, traits_updated_at, origin, retired_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		ON CONFLICT (agent_id) DO NOTHING`
-
-	_, err = agentStore.querier.Exec(ctx, insertSQL,
+	_, err = agentStore.querier.Exec(ctx, insertAgentSQL,
 		string(agentRecord.ID),
 		agentRecord.Population,
 		agentRecord.Country,
@@ -105,6 +106,50 @@ func (agentStore *PostgresAgentStore) InsertAgent(ctx context.Context, agentReco
 	)
 	if err != nil {
 		return fmt.Errorf("agent_store: insert %s: %w", agentRecord.ID, err)
+	}
+	return nil
+}
+
+// BatchInsertAgents queues all inserts in a single pgx batch (one network
+// roundtrip). Each insert is still ON CONFLICT DO NOTHING so a crash-
+// recovery replay that re-presents the same id is a silent no-op. The
+// Querier interface exposes SendBatch, which both *pgxpool.Pool and pgx.Tx
+// satisfy. Callers that only have the AgentStore interface type-assert to
+// this method and fall back to the loop if unavailable.
+func (agentStore *PostgresAgentStore) BatchInsertAgents(ctx context.Context, agents []agent.Agent) error {
+	if len(agents) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
+	for _, agentRecord := range agents {
+		traitsJSON, err := json.Marshal(agentRecord.Traits)
+		if err != nil {
+			return fmt.Errorf("agent_store: batch marshal traits for %s: %w", agentRecord.ID, err)
+		}
+		var tradingCapital *int64
+		if agentRecord.Population == agent.PopulationCanonical {
+			persisted := agentRecord.TradingCapital
+			tradingCapital = &persisted
+		}
+		batch.Queue(insertAgentSQL,
+			string(agentRecord.ID),
+			agentRecord.Population,
+			agentRecord.Country,
+			agentRecord.CapitalHandle,
+			tradingCapital,
+			string(traitsJSON),
+			agentRecord.TraitsVersion,
+			agentRecord.TraitsUpdatedAt,
+			agentRecord.Origin,
+			agentRecord.RetiredAt,
+		)
+	}
+	results := agentStore.querier.SendBatch(ctx, batch)
+	defer results.Close()
+	for _, agentRecord := range agents {
+		if _, err := results.Exec(); err != nil {
+			return fmt.Errorf("agent_store: batch insert %s: %w", agentRecord.ID, err)
+		}
 	}
 	return nil
 }

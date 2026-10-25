@@ -104,17 +104,55 @@ func (leaseAllocator *RedisLeaseAllocator) Enlist(ctx context.Context, country s
 	return nil
 }
 
+// EnlistBatch sets all agent-id → exchange mappings in a single HSet call
+// (one network roundtrip). Semantically identical to calling Enlist N times.
+func (leaseAllocator *RedisLeaseAllocator) EnlistBatch(ctx context.Context, country string, agentIDs []agent.AgentID, exchangeID string) error {
+	if len(agentIDs) == 0 {
+		return nil
+	}
+	leasedKey := LeaseLeasedKey(country)
+	// HSet with alternating field/value pairs: agentID_1, exchangeID, agentID_2, exchangeID, ...
+	args := make([]any, 0, len(agentIDs)*2)
+	for _, agentID := range agentIDs {
+		args = append(args, string(agentID), exchangeID)
+	}
+	if err := leaseAllocator.client.HSet(ctx, leasedKey, args...).Err(); err != nil {
+		return fmt.Errorf("store: enlist batch %d agents in %s for %s: %w", len(agentIDs), country, exchangeID, err)
+	}
+	return nil
+}
+
 func (leaseAllocator *RedisLeaseAllocator) Release(ctx context.Context, country string, agentIDs []agent.AgentID) error {
+	if len(agentIDs) == 0 {
+		return nil
+	}
 	leasedKey := LeaseLeasedKey(country)
 	availableKey := LeaseAvailableKey(country)
 
-	var releaseErrors []error
-	for _, agentID := range agentIDs {
-		if err := leaseAllocator.client.HDel(ctx, leasedKey, string(agentID)).Err(); err != nil {
-			releaseErrors = append(releaseErrors, fmt.Errorf("HDEL leased for %s: %w", agentID, err))
+	// Pipeline all HDel+SAdd pairs so N agents cost one network roundtrip.
+	// Discard the outer Pipelined error — it is just the first individual
+	// command error, which the loop below already collects and attributes
+	// per-agent. The nil return from the pipeline func ensures all commands
+	// are sent regardless of intermediate results.
+	cmds, _ := leaseAllocator.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, agentID := range agentIDs {
+			pipe.HDel(ctx, leasedKey, string(agentID))
+			pipe.SAdd(ctx, availableKey, string(agentID))
 		}
-		if err := leaseAllocator.client.SAdd(ctx, availableKey, string(agentID)).Err(); err != nil {
-			releaseErrors = append(releaseErrors, fmt.Errorf("SADD available for %s: %w", agentID, err))
+		return nil
+	})
+
+	var releaseErrors []error
+	for i, cmd := range cmds {
+		if cmdErr := cmd.Err(); cmdErr != nil {
+			agentIdx := i / 2
+			if agentIdx < len(agentIDs) {
+				if i%2 == 0 {
+					releaseErrors = append(releaseErrors, fmt.Errorf("HDEL leased for %s: %w", agentIDs[agentIdx], cmdErr))
+				} else {
+					releaseErrors = append(releaseErrors, fmt.Errorf("SADD available for %s: %w", agentIDs[agentIdx], cmdErr))
+				}
+			}
 		}
 	}
 	if len(releaseErrors) > 0 {

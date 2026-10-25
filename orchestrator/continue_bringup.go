@@ -11,6 +11,27 @@ import (
 	"simulation-agents/transport"
 )
 
+// The four interfaces below are satisfied by the concrete production store
+// types when they carry a batch path. Test fakes implement only the base
+// interfaces and do not satisfy these, so continueBringUp falls back to the
+// per-agent loop — preserving existing test coverage without change.
+
+type batchAgentInserter interface {
+	BatchInsertAgents(ctx context.Context, agents []agent.Agent) error
+}
+
+type batchWALClearer interface {
+	ClearBatch(ctx context.Context, agentIDs []agent.AgentID) error
+}
+
+type batchSnapshotWriter interface {
+	WriteInitialSnapshotBatch(ctx context.Context, exchangeID string, agents []agent.Agent) error
+}
+
+type batchLeaseEnlister interface {
+	EnlistBatch(ctx context.Context, country string, agentIDs []agent.AgentID, exchangeID string) error
+}
+
 // continueBringUp is the asynchronous tail of a bring-up. It picks
 // up where the synchronous spine left off (account-open done, a
 // Population of agents already carrying handles and session capital)
@@ -124,16 +145,45 @@ func (orchestrator *Orchestrator) continueBringUp(
 // that keeps the crash-recovery drain correct: a crash between
 // InsertAgent and WAL.Clear leaves the WAL entry present, and the
 // drain path re-runs the chain idempotently.
+//
+// When the underlying stores support batch operations the whole step
+// costs two network roundtrips (one pgx batch + one Redis HDel) instead
+// of 2N individual calls.
 func (orchestrator *Orchestrator) persistNewAgents(
 	ctx context.Context,
 	newAgents []agent.Agent,
 ) error {
-	for _, agentRecord := range newAgents {
-		if err := orchestrator.agentStore.InsertAgent(ctx, agentRecord); err != nil {
-			return fmt.Errorf("orchestrator: InsertAgent for %s: %w", agentRecord.ID, err)
+	if len(newAgents) == 0 {
+		return nil
+	}
+
+	// Batch Postgres inserts when the concrete store supports it.
+	if batcher, ok := orchestrator.agentStore.(batchAgentInserter); ok {
+		if err := batcher.BatchInsertAgents(ctx, newAgents); err != nil {
+			return fmt.Errorf("orchestrator: BatchInsertAgents: %w", err)
 		}
-		if err := orchestrator.pendingMintWAL.Clear(ctx, agentRecord.ID); err != nil {
-			return fmt.Errorf("orchestrator: WAL.Clear for %s: %w", agentRecord.ID, err)
+	} else {
+		for _, agentRecord := range newAgents {
+			if err := orchestrator.agentStore.InsertAgent(ctx, agentRecord); err != nil {
+				return fmt.Errorf("orchestrator: InsertAgent for %s: %w", agentRecord.ID, err)
+			}
+		}
+	}
+
+	// Batch WAL clears when the concrete WAL supports it.
+	if clearer, ok := orchestrator.pendingMintWAL.(batchWALClearer); ok {
+		ids := make([]agent.AgentID, len(newAgents))
+		for i, a := range newAgents {
+			ids[i] = a.ID
+		}
+		if err := clearer.ClearBatch(ctx, ids); err != nil {
+			return fmt.Errorf("orchestrator: WAL.ClearBatch: %w", err)
+		}
+	} else {
+		for _, agentRecord := range newAgents {
+			if err := orchestrator.pendingMintWAL.Clear(ctx, agentRecord.ID); err != nil {
+				return fmt.Errorf("orchestrator: WAL.Clear for %s: %w", agentRecord.ID, err)
+			}
 		}
 	}
 	return nil
@@ -152,7 +202,17 @@ func (orchestrator *Orchestrator) writeInitialRuntimeSnapshots(
 	exchangeID string,
 	population Population,
 ) error {
-	for _, agentRecord := range population.All() {
+	allAgents := population.All()
+	if len(allAgents) == 0 {
+		return nil
+	}
+	if batcher, ok := orchestrator.runtimeStore.(batchSnapshotWriter); ok {
+		if err := batcher.WriteInitialSnapshotBatch(ctx, exchangeID, allAgents); err != nil {
+			return fmt.Errorf("orchestrator: WriteInitialSnapshotBatch on %s: %w", exchangeID, err)
+		}
+		return nil
+	}
+	for _, agentRecord := range allAgents {
 		if err := orchestrator.runtimeStore.WriteInitialSnapshot(ctx, exchangeID, agentRecord); err != nil {
 			return fmt.Errorf(
 				"orchestrator: WriteInitialSnapshot for %s on %s: %w",
@@ -173,6 +233,19 @@ func (orchestrator *Orchestrator) enlistOnDemandAgents(
 	request transport.BringUpRequest,
 	newAgents []agent.Agent,
 ) error {
+	if len(newAgents) == 0 {
+		return nil
+	}
+	if enlister, ok := orchestrator.leaseAllocator.(batchLeaseEnlister); ok {
+		ids := make([]agent.AgentID, len(newAgents))
+		for i, a := range newAgents {
+			ids[i] = a.ID
+		}
+		if err := enlister.EnlistBatch(ctx, request.Country, ids, request.ExchangeID); err != nil {
+			return fmt.Errorf("orchestrator: lease.EnlistBatch for country %s: %w", request.Country, err)
+		}
+		return nil
+	}
 	for _, agentRecord := range newAgents {
 		if err := orchestrator.leaseAllocator.Enlist(
 			ctx, request.Country, agentRecord.ID, request.ExchangeID,
