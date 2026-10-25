@@ -65,13 +65,13 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		// anchor, continuous for the first third of the session then
 		// sparse random top-ups every 30-90s.
 		LiquiditySeeder: session.LiquiditySeederParams{
-			SellerCount:          3,
-			BuyerCount:           3,
+			SellerCount:          10,
+			BuyerCount:           10,
 			OrderSizeMin:         5,
-			OrderSizeMax:         20,
-			PivotLevelCount:      3,
-			RandomLevelCount:     4,
-			RandomLevelSpreadBps: 50,
+			OrderSizeMax:         500,
+			PivotLevelCount:      5,
+			RandomLevelCount:     3,
+			RandomLevelSpreadBps: 100,
 			ContinuousFraction:   1.0 / 3.0,
 			ReentryCadenceMin:    30 * time.Second,
 			ReentryCadenceMax:    90 * time.Second,
