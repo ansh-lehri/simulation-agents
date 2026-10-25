@@ -55,9 +55,9 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		// comfortably absorb one action tick's worth of punches for
 		// the default PopulationSize (100) without the act-coin gate
 		// needing every agent to fire for the channel to fill.
-		TAction:          1 * time.Second,
-		TPresence:        30 * time.Second,
-		PunchBuffer:      2000,
+		TAction:           1 * time.Second,
+		TPresence:         30 * time.Second,
+		PunchBuffer:       2000,
 		DispatcherWorkers: 50,
 		// LiquiditySeeder — see docs/agents/LIQUIDITY_SEEDER.md.
 		// Calibration placeholders like every other dial here: 3
@@ -67,13 +67,13 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		// sparse random top-ups every 30-90s.
 		LiquiditySeeder: session.LiquiditySeederParams{
 			SellerCount:          10,
-			BuyerCount:           10,
+			BuyerCount:           5,
 			OrderSizeMin:         5,
 			OrderSizeMax:         500,
 			PivotLevelCount:      5,
 			RandomLevelCount:     3,
 			RandomLevelSpreadBps: 100,
-			ContinuousFraction:   1.0 / 3.0,
+			ContinuousFraction:   1.0 / 20.0,
 			ReentryCadenceMin:    30 * time.Second,
 			ReentryCadenceMax:    90 * time.Second,
 			GenesisOffsetBps:     100,
