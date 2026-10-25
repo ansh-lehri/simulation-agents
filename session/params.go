@@ -102,6 +102,13 @@ type Params struct {
 	// blocking the action loop while the dispatcher is mid-send.
 	PunchBuffer int
 
+	// DispatcherWorkers is the number of concurrent goroutines draining
+	// the punch channel and sending orders to Core. One worker can only
+	// send one HTTP call at a time (~20 orders/sec); for large populations
+	// multiple workers are needed to keep up with the tick rate. Zero or
+	// negative falls back to 1 (safe default for small populations).
+	DispatcherWorkers int
+
 	// Perception carries the two calibration dials for agent signal
 	// computation: the noise sigma (scaled by each agent's skill) and the
 	// MA saturation multiple. Applied uniformly to every Perceive call
