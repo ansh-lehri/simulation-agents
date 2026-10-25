@@ -198,7 +198,7 @@ func defaultDecisionParams() decision.Params {
 		// tuned together against SYNTH_DEF's observed price scale.
 		MaxFrac:     0.35,
 		Gamma:       0.5,
-		ThetaMarket: 0.7,
+		ThetaMarket: 0.95,
 		KPlace:      0.5,
 		SigmaExec:   0.15,
 	}
@@ -213,7 +213,7 @@ func defaultDecisionParams() decision.Params {
 // know about the scenario package.
 func defaultOrchestratorConfig() orchestrator.OrchestratorConfig {
 	return orchestrator.OrchestratorConfig{
-		PopulationSize:  13000,
+		PopulationSize:  300,
 		LifecycleBuffer: 64,
 		CapitalParams: agent.CapitalParams{
 			Floor:        1_000,
