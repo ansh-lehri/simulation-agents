@@ -257,15 +257,25 @@ func TestResolveTypeAndPrice_BuyRoundsDownSellRoundsUp(t *testing.T) {
 	}
 }
 
-func TestResolveTypeAndPrice_NoTwoSidedBook_NoLimitOrder(t *testing.T) {
+func TestResolveTypeAndPrice_NoTwoSidedBook_FallsBackToMarket(t *testing.T) {
+	// When the book is one-sided (no ask), a limit-personality agent can't
+	// compute a spread-based price. The fallback is a market order rather
+	// than skipping the agent entirely — an IOC market on an empty/one-sided
+	// book cancels cleanly, and the agent is unblocked for future ticks.
 	oneSidedQuote := store.Quote{HasLast: true, LastPrice: 100, HasBid: true, BidPrice: 99, HasAsk: false}
 	acc := quoteAccessor("AAPL", oneSidedQuote)
 	cfg := testExecParams()
-	cfg.ThetaMarket = 1 // force the limit branch
+	cfg.ThetaMarket = 1 // force the limit branch (aggressiveness always < 1)
 
-	_, _, _, ok := resolveTypeAndPrice(core.OrderSideBuy, 0.5, "AAPL", acc, cfg)
-	if ok {
-		t.Error("got ok=true with no two-sided book, want ok=false")
+	orderType, limitPrice, _, ok := resolveTypeAndPrice(core.OrderSideBuy, 0.5, "AAPL", acc, cfg)
+	if !ok {
+		t.Error("got ok=false with one-sided book, want market-order fallback (ok=true)")
+	}
+	if orderType != core.OrderTypeMarket {
+		t.Errorf("got type=%v, want %v", orderType, core.OrderTypeMarket)
+	}
+	if limitPrice != 0 {
+		t.Errorf("got limit_price=%d, want 0 for market fallback", limitPrice)
 	}
 }
 

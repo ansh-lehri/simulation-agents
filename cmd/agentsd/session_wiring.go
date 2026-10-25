@@ -37,7 +37,7 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		// bars (vs. 1 at the old 1h window) — accepted for now,
 		// revisit if bring-up latency becomes a problem.
 		HistoryLookback:         20 * 24 * time.Hour,
-		LoadSessionsConcurrency: 100,
+		LoadSessionsConcurrency: 50,
 		OnDemandSessionDuration: 30 * time.Minute,
 		AckReadTimeout:          5 * time.Second,
 		HistoryTimeframes:       []string{core.TimeframeOneMinute},

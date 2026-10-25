@@ -30,9 +30,6 @@ func ShouldReperceive(
 	if refs == (store.PerceptionRefs{}) {
 		return true
 	}
-	if !acc.Present(inst) {
-		return false
-	}
 	if traits.Diet == nil || traits.Perception == nil {
 		return false
 	}

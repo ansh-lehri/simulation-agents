@@ -76,14 +76,30 @@ func TestShouldReperceive_EmptyRefs(t *testing.T) {
 	}
 }
 
-func TestShouldReperceive_Absent(t *testing.T) {
+func TestShouldReperceive_NoLiveQuote_CandlesUnchanged_Coasts(t *testing.T) {
+	// present=false (no WS snapshot), but candle data exactly matches refs →
+	// every channel reports no change → coast. The Present gate no longer
+	// short-circuits; each channel handles absence gracefully on its own.
 	acc := gateAccessor("X", "1m", 1000, 995, 1005, 100, "open", false)
 	traits := sensitiveTraits(0.001)
 	refs := store.PerceptionRefs{LastPrice: 1000, LastSpread: 10, LastVolume: 100, LastPhase: "open"}
 
-	// Absent instrument → coast (false).
 	if ShouldReperceive(traits, acc, "X", "1m", refs) {
-		t.Fatal("absent instrument must return false (coast)")
+		t.Fatal("no change in candle data should coast even without a live WS quote")
+	}
+}
+
+func TestShouldReperceive_NoLiveQuote_CandleVolumeChanged_Triggers(t *testing.T) {
+	// present=false (no WS snapshot), but the latest candle's volume has
+	// spiked relative to refs.LastVolume. The volume channel must trigger
+	// reperceive even with no live WS quote — candle-based channels must
+	// not be blocked by the absence of a snapshot.
+	acc := gateAccessor("X", "1m", 1000, 0, 0, 200, "", false)
+	traits := sensitiveTraits(0.001)
+	refs := store.PerceptionRefs{LastPrice: 1000, LastVolume: 100}
+
+	if !ShouldReperceive(traits, acc, "X", "1m", refs) {
+		t.Fatal("volume spike without live WS quote should trigger reperceive")
 	}
 }
 
