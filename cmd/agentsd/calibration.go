@@ -213,7 +213,7 @@ func defaultDecisionParams() decision.Params {
 // know about the scenario package.
 func defaultOrchestratorConfig() orchestrator.OrchestratorConfig {
 	return orchestrator.OrchestratorConfig{
-		PopulationSize:  5,
+		PopulationSize:  13000,
 		LifecycleBuffer: 64,
 		CapitalParams: agent.CapitalParams{
 			Floor:        1_000,
