@@ -174,7 +174,7 @@ func (sched *LiveScheduler) buildWorkingSet(
 		}
 	}
 
-	return &workingSet{
+	ws := &workingSet{
 		agents:       agents,
 		active:       make(map[agent.AgentID]*workingAgent),
 		sessionStart: request.SessionStart,
@@ -183,6 +183,69 @@ func (sched *LiveScheduler) buildWorkingSet(
 		sessionRNG:   sessionRNG,
 		exchangeID:   request.ExchangeID,
 	}
+	sched.logPopulationProfile(ws)
+	return ws
+}
+
+// logPopulationProfile emits one structured log summarising the agent
+// population assembled into ws. Called once at buildWorkingSet time so
+// operators can inspect trait distribution without crawling Redis.
+func (sched *LiveScheduler) logPopulationProfile(ws *workingSet) {
+	var endogenousCount, herdCount, tipperCount int
+	var totalSkill, totalPAct, totalCapital float64
+	minSkill, maxSkill := 1.0, 0.0
+	minPAct, maxPAct := 1.0, 0.0
+
+	for _, agentRecord := range ws.agents {
+		t := agentRecord.traits
+		switch t.AgentKind {
+		case agent.AgentKindEndogenous:
+			endogenousCount++
+		case agent.AgentKindHerd:
+			herdCount++
+		}
+		if t.IsTipper {
+			tipperCount++
+		}
+		totalSkill += t.Skill
+		totalPAct += t.PAct
+		totalCapital += float64(agentRecord.tradingCapital)
+		if t.Skill < minSkill {
+			minSkill = t.Skill
+		}
+		if t.Skill > maxSkill {
+			maxSkill = t.Skill
+		}
+		if t.PAct < minPAct {
+			minPAct = t.PAct
+		}
+		if t.PAct > maxPAct {
+			maxPAct = t.PAct
+		}
+	}
+
+	n := len(ws.agents)
+	if n == 0 {
+		sched.logger.Info("session: population profile — empty population",
+			"exchange_id", ws.exchangeID,
+		)
+		return
+	}
+
+	sched.logger.Info("session: population profile",
+		"exchange_id", ws.exchangeID,
+		"total_agents", n,
+		"endogenous_count", endogenousCount,
+		"herd_count", herdCount,
+		"tipper_count", tipperCount,
+		"skill_mean", totalSkill/float64(n),
+		"skill_min", minSkill,
+		"skill_max", maxSkill,
+		"p_act_mean", totalPAct/float64(n),
+		"p_act_min", minPAct,
+		"p_act_max", maxPAct,
+		"trading_capital_mean_rupees", int64(totalCapital/float64(n)/100),
+	)
 }
 
 // runLoop is the two-cadence loop. Each iteration runs whichever
