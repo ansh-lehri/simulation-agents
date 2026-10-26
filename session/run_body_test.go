@@ -503,6 +503,14 @@ func (fake *recordingRunCore) PunchOrder(_ context.Context, _ core.OrderPunchReq
 	return nil
 }
 
+func (fake *recordingRunCore) CancelOrder(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (fake *recordingRunCore) PunchOrderTracked(_ context.Context, _ core.OrderPunchRequest) (string, error) {
+	return "", nil
+}
+
 func (fake *recordingRunCore) GetAccountCash(_ context.Context, _ string) (core.AccountCash, error) {
 	return core.AccountCash{}, nil
 }

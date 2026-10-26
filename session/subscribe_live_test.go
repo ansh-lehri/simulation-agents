@@ -315,6 +315,14 @@ func (fake *programmableSubscribeCoreClient) PunchOrder(_ context.Context, _ cor
 	return nil
 }
 
+func (fake *programmableSubscribeCoreClient) CancelOrder(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (fake *programmableSubscribeCoreClient) PunchOrderTracked(_ context.Context, _ core.OrderPunchRequest) (string, error) {
+	return "", nil
+}
+
 func (fake *programmableSubscribeCoreClient) GetAccountCash(_ context.Context, _ string) (core.AccountCash, error) {
 	return core.AccountCash{}, nil
 }

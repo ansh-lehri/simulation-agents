@@ -14,7 +14,11 @@ const (
 	// defaultListenAddr binds to loopback so an unconfigured development run
 	// cannot accidentally expose the inbound orchestrator seam on a routable
 	// interface. Deployment overrides via envListenAddr.
-	defaultListenAddr = "127.0.0.1:8080"
+	// Port 8090 matches market-simulator/cmd/server/main.go's
+	// defaultAgentServerURL so both sides agree with no env-var wiring.
+	// Explicit 127.0.0.1 (IPv4) avoids macOS resolving "localhost" → ::1
+	// (IPv6) and landing on a different process than intended.
+	defaultListenAddr = "127.0.0.1:8090"
 )
 
 // loadListenAddr reads this executable's listen address from the environment,

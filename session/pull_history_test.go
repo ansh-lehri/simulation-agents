@@ -568,6 +568,14 @@ func (fake *programmableCoreClientForHistory) PunchOrder(_ context.Context, _ co
 	return nil
 }
 
+func (fake *programmableCoreClientForHistory) CancelOrder(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (fake *programmableCoreClientForHistory) PunchOrderTracked(_ context.Context, _ core.OrderPunchRequest) (string, error) {
+	return "", nil
+}
+
 // recordingMarketDataStore captures every market-data write so a
 // test can assert on exchange_id, instrument, timeframe, and
 // payloads. All three ops are recorded in full — pullHistory tests

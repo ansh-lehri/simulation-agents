@@ -81,6 +81,34 @@ func (client *Client) PunchOrder(ctx context.Context, request OrderPunchRequest)
 	)
 }
 
+// orderPunchResponseBody is the 202 response shape returned by Core on a
+// successful order submission.
+type orderPunchResponseBody struct {
+	OrderID string `json:"order_id"`
+}
+
+// PunchOrderTracked submits an order and returns the broker-minted
+// order_id from the 202 response. Used by the liquidity seeder, which
+// needs to track and cancel its own resting orders each round.
+// The agent decision pipeline uses PunchOrder (fire-and-forget) instead.
+func (client *Client) PunchOrderTracked(ctx context.Context, request OrderPunchRequest) (string, error) {
+	if err := validateOrderPunchRequest(request); err != nil {
+		return "", err
+	}
+	var resp orderPunchResponseBody
+	if err := client.executeJSONCall(
+		ctx,
+		fireAndForgetCall,
+		http.MethodPost,
+		orderPunchEndpointPath,
+		request,
+		&resp,
+	); err != nil {
+		return "", err
+	}
+	return resp.OrderID, nil
+}
+
 // validateOrderPunchRequest enforces the local write contract before
 // an order touches the network. Every rejection here is a programming
 // bug upstream (an agent built a malformed order); surfacing it as an

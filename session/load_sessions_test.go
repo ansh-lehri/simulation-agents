@@ -422,6 +422,14 @@ func (fake *programmableCoreClient) PunchOrder(_ context.Context, _ core.OrderPu
 	return nil
 }
 
+func (fake *programmableCoreClient) CancelOrder(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (fake *programmableCoreClient) PunchOrderTracked(_ context.Context, _ core.OrderPunchRequest) (string, error) {
+	return "", nil
+}
+
 func (fake *programmableCoreClient) GetAccountCash(_ context.Context, _ string) (core.AccountCash, error) {
 	return core.AccountCash{}, nil
 }

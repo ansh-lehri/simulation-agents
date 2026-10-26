@@ -82,4 +82,18 @@ const (
 	// instrument that has not yet printed a trade in the current
 	// session, so no reference price exists to clear against.
 	ReasonNoMarketPrice = "no_market_price"
+
+	// ReasonNotCancellable is returned when the order exists but is not
+	// in a cancellable state (already filled, rejected, or cancelled).
+	ReasonNotCancellable = "not_cancellable"
+
+	// ReasonUnknownOrder is returned when no order with the given id
+	// exists on the account's shard — the order was never placed, or has
+	// already been finalized and removed.
+	ReasonUnknownOrder = "unknown_order"
+
+	// ReasonCancelPending is returned when a cancel request for the same
+	// order is already in flight — the earlier request is still being
+	// processed by the exchange.
+	ReasonCancelPending = "cancel_pending"
 )

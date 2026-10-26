@@ -199,7 +199,7 @@ func defaultDecisionParams() decision.Params {
 		MaxFrac:     0.35,
 		Gamma:       0.5,
 		ThetaMarket: 0.95,
-		KPlace:      0.5,
+		KPlace:      1.0,
 		SigmaExec:   0.15,
 	}
 }

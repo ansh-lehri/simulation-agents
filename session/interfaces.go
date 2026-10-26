@@ -97,6 +97,18 @@ type CoreClient interface {
 	// positions can't go negative). Called once per seller seeder per
 	// instrument before its first ask.
 	SeedInventory(ctx context.Context, request core.SeedInventoryRequest) (core.SeedInventoryResponse, error)
+
+	// CancelOrder sends a cancel request for a resting order. Used by
+	// the liquidity seeder's cancel-before-replace loop. A 409 with
+	// reason not_cancellable / unknown_order / cancel_pending means the
+	// order is already gone; the seeder treats those as success.
+	CancelOrder(ctx context.Context, accountID, orderID string) error
+
+	// PunchOrderTracked submits a trade order and returns the broker-
+	// minted order_id from the 202 response. Used by the liquidity seeder
+	// so it can track and cancel its own resting orders each round.
+	// The agent decision pipeline uses PunchOrder (fire-and-forget).
+	PunchOrderTracked(ctx context.Context, request core.OrderPunchRequest) (string, error)
 }
 
 // WSConnection is the connection-handle shape the Runner consumes

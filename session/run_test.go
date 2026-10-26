@@ -154,6 +154,14 @@ func (stubCoreClient) PunchOrder(_ context.Context, _ core.OrderPunchRequest) er
 	return nil
 }
 
+func (stubCoreClient) CancelOrder(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (stubCoreClient) PunchOrderTracked(_ context.Context, _ core.OrderPunchRequest) (string, error) {
+	return "", nil
+}
+
 func (stubCoreClient) GetAccountCash(_ context.Context, _ string) (core.AccountCash, error) {
 	return core.AccountCash{}, nil
 }

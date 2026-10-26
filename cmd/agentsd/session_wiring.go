@@ -25,21 +25,26 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 	return session.Params{
 		EntryCurve:     session.DefaultEntryCurveParams(),
 		LifecycleCurve: session.DefaultLifecycleCurveParams(),
-		// HistoryLookback is wide (20 days, not the original 1 hour)
-		// so the pre-open history pull reaches back far enough to
-		// catch the canonical market's actual most recent candle even
-		// when canonical isn't trading at this exact wall-clock
-		// moment — CurrentPrice's candle fallback already takes
-		// whatever bar is chronologically last in the returned
-		// window, so a wider window just makes it more likely that
-		// last bar is real data instead of an empty result. Costs
-		// ~58 paged Core round-trips per instrument/timeframe at 1m
-		// bars (vs. 1 at the old 1h window) — accepted for now,
-		// revisit if bring-up latency becomes a problem.
-		HistoryLookback:         20 * 24 * time.Hour,
+		// HistoryLookback must be wide enough to catch the canonical
+		// market's most recent candle even across long weekends or
+		// holidays (max gap ~3.5 days from Thursday close to Monday
+		// open). 4 days covers that comfortably. Was previously 20
+		// days (~58 paged Core round-trips at 1m bars), which caused
+		// the WS subscribe retry window (12 × 5s = 60s) to exhaust
+		// before the liquidity seeder started for populations ≥ 1000
+		// agents — pullHistory blocked preOpenGroup.Wait() and delayed
+		// the seeder spawn. 4 days → ~9 pages (vs 58), completing well
+		// inside the retry window under any realistic DB latency.
+		HistoryLookback:         4 * 24 * time.Hour,
 		LoadSessionsConcurrency: 50,
 		OnDemandSessionDuration: 30 * time.Minute,
 		AckReadTimeout:          5 * time.Second,
+		// SubscribeMaxRetries raised from the default (12 = 60s window)
+		// to give the liquidity seeder enough runway to tape-learn the
+		// instrument before retries exhaust for large populations. 36
+		// retries × 5s interval = 180s window, comfortably larger than
+		// any realistic preOpenGroup.Wait() duration.
+		SubscribeMaxRetries:     36,
 		HistoryTimeframes:       []string{core.TimeframeOneMinute},
 		ConfiguredTimeframes:    []string{core.TimeframeOneMinute},
 		MaxLookbackK:            120,
@@ -73,9 +78,9 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 			PivotLevelCount:      5,
 			RandomLevelCount:     3,
 			RandomLevelSpreadBps: 100,
-			ContinuousFraction:   1.0 / 20.0,
-			ReentryCadenceMin:    30 * time.Second,
-			ReentryCadenceMax:    90 * time.Second,
+			ContinuousFraction:   0.25,
+			ReentryCadenceMin:    5 * time.Second,
+			ReentryCadenceMax:    15 * time.Second,
 			GenesisOffsetBps:     100,
 		},
 		// ExpectedQuitsPerSession is the canonical quit-for-good
@@ -174,6 +179,20 @@ func (adapter *sessionCoreClientAdapter) PunchOrder(
 	request core.OrderPunchRequest,
 ) error {
 	return adapter.inner.PunchOrder(ctx, request)
+}
+
+func (adapter *sessionCoreClientAdapter) CancelOrder(
+	ctx context.Context,
+	accountID, orderID string,
+) error {
+	return adapter.inner.CancelOrder(ctx, accountID, orderID)
+}
+
+func (adapter *sessionCoreClientAdapter) PunchOrderTracked(
+	ctx context.Context,
+	request core.OrderPunchRequest,
+) (string, error) {
+	return adapter.inner.PunchOrderTracked(ctx, request)
 }
 
 func (adapter *sessionCoreClientAdapter) GetAccountCash(
