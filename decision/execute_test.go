@@ -49,16 +49,16 @@ func newExecRNG(seed uint64) *rand.Rand {
 func TestExecute_Flat_RunsOpenMath(t *testing.T) {
 	ambient := AmbientInputs{
 		AccountID: "acct-1", Instrument: "AAPL", Timeframe: "1m",
-		TradingCapital: 10_000,
+		TradingCapital: 100_000, // paise; price is 1_000 ticks so ratio is realistic
 	}
-	acc := quoteAccessor("AAPL", twoSidedQuote(9900, 10100, 10000))
+	acc := quoteAccessor("AAPL", twoSidedQuote(990, 1010, 1000))
 	intent := ExecIntent{Action: ExecIntentActionOpen, Direction: 1, Conviction: 0.5}
 
 	req, ok := Execute(intent, ambient, acc, testExecTraits(0.9, 1), newExecRNG(1), testExecParams())
 	if !ok {
 		t.Fatal("Execute: got ok=false for a flat agent with capital and a valid price, want ok=true")
 	}
-	// baseNotional = 10000*0.4*0.5 = 2000; qty = floor(2000/(10000*0.01)) = floor(2000/100) = 20.
+	// baseNotional = 100_000*0.4*0.5 = 20_000; qty = floor(20_000/1_000) = 20.
 	if req.Qty != 20 {
 		t.Errorf("Qty: got %d, want 20", req.Qty)
 	}
@@ -70,17 +70,17 @@ func TestExecute_Flat_RunsOpenMath(t *testing.T) {
 func TestExecute_HoldingSameDirection_RunsAddMathWithSharedFormula(t *testing.T) {
 	ambient := AmbientInputs{
 		AccountID: "acct-1", Instrument: "AAPL", Timeframe: "1m",
-		TradingCapital: 10_000,
-		Positions:      []core.Position{{Instrument: "AAPL", Qty: 10, WeightedAvgEntry: 10000}},
+		TradingCapital: 100_000,
+		Positions:      []core.Position{{Instrument: "AAPL", Qty: 10, WeightedAvgEntry: 1000}},
 	}
-	acc := quoteAccessor("AAPL", twoSidedQuote(9900, 10100, 10000))
+	acc := quoteAccessor("AAPL", twoSidedQuote(990, 1010, 1000))
 	intent := ExecIntent{Action: ExecIntentActionOpen, Direction: 1, Conviction: 0.5}
 
 	req, ok := Execute(intent, ambient, acc, testExecTraits(0.9, 1), newExecRNG(1), testExecParams())
 	if !ok {
 		t.Fatal("Execute: got ok=false for a same-direction add, want ok=true")
 	}
-	// committed = int64(10000*0.01*10) = 1000; available = 9000; baseNotional = 9000*0.4*0.5 = 1800; qty = floor(1800/(10000*0.01)) = floor(1800/100) = 18.
+	// committed = 1000*10 = 10_000; available = 90_000; baseNotional = 90_000*0.4*0.5 = 18_000; qty = floor(18_000/1_000) = 18.
 	if req.Qty != 18 {
 		t.Errorf("Qty: got %d, want 18 (the existing same-instrument position must shrink the shared pool)", req.Qty)
 	}
@@ -129,13 +129,13 @@ func TestExecute_ActionClose_RoutesToCloseRegardlessOfDirectionVsPositionSign(t 
 // --- qty, formulation Y (open/add)
 
 func TestBuildOpenOrAddOrder_SharedCapitalPool_ExistingPositionElsewhereReducesAvailable(t *testing.T) {
-	acc := quoteAccessor("MSFT", twoSidedQuote(9900, 10100, 10000))
+	acc := quoteAccessor("MSFT", twoSidedQuote(990, 1010, 1000))
 	intent := ExecIntent{Action: ExecIntentActionOpen, Direction: 1, Conviction: 1}
 	cfg := testExecParams()
 	cfg.MaxFrac = 1 // isolate the shared-pool effect from max_frac shaping
 
 	withoutOtherPosition := AmbientInputs{
-		AccountID: "acct-1", Instrument: "MSFT", Timeframe: "1m", TradingCapital: 10_000,
+		AccountID: "acct-1", Instrument: "MSFT", Timeframe: "1m", TradingCapital: 100_000,
 	}
 	reqA, okA := Execute(intent, withoutOtherPosition, acc, testExecTraits(0.9, 1), newExecRNG(1), cfg)
 	if !okA {
@@ -143,8 +143,8 @@ func TestBuildOpenOrAddOrder_SharedCapitalPool_ExistingPositionElsewhereReducesA
 	}
 
 	withOtherPosition := AmbientInputs{
-		AccountID: "acct-1", Instrument: "MSFT", Timeframe: "1m", TradingCapital: 10_000,
-		Positions: []core.Position{{Instrument: "AAPL", Qty: 50, WeightedAvgEntry: 10000}}, // committed = int64(10000*0.01*50) = 5000; consumes 5000 of the pool
+		AccountID: "acct-1", Instrument: "MSFT", Timeframe: "1m", TradingCapital: 100_000,
+		Positions: []core.Position{{Instrument: "AAPL", Qty: 50, WeightedAvgEntry: 1000}}, // committed = 1000*50 = 50_000; consumes half the pool
 	}
 	reqB, okB := Execute(intent, withOtherPosition, acc, testExecTraits(0.9, 1), newExecRNG(1), cfg)
 	if !okB {
