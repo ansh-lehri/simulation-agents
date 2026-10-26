@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"time"
@@ -23,10 +24,14 @@ const (
 
 // seederIdentity is one dumb operator account — no trait struct, no
 // Tier-4 decision tree, just an account id and which side it works.
+// activeOrderID tracks the most recently placed resting GTC order so it
+// can be cancelled before placing a fresh one each round (cancel-before-
+// replace prevents accumulation of stale orders at fixed pivot levels).
 type seederIdentity struct {
-	userID    string
-	accountID string
-	side      seederSide
+	userID        string
+	accountID     string
+	side          seederSide
+	activeOrderID string // empty until the first order is placed
 }
 
 // seedLevel is one price level a seeder round will punch an order at.
@@ -157,10 +162,12 @@ func (runner *Runner) openOneSeeder(
 }
 
 // seedOneRound computes fresh price levels per instrument and punches
-// one order per (seeder, level) pair this round. Sellers seed
-// inventory before their first ask on an instrument (tracked
-// in-memory per round — a seller re-seeding every round is wasteful
-// but harmless, since seed-inventory only credits additional units).
+// one order per (seeder, level) pair this round using cancel-before-
+// replace: each identity cancels its previous resting GTC order before
+// placing a fresh one, so book depth from seeders stays bounded at
+// (identity_count × one_order_size) rather than growing every round.
+// Sellers seed inventory before each ask (re-seeding every round is
+// wasteful but harmless — seed-inventory credits additional units).
 func (runner *Runner) seedOneRound(
 	ctx context.Context,
 	request transport.BringUpRequest,
@@ -212,6 +219,23 @@ func (runner *Runner) seedOneRound(
 				"price", level.price,
 			}
 
+			// Cancel the previous resting order for this identity before
+			// placing a fresh one. This is the cancel-before-replace step
+			// that keeps book depth bounded.
+			if identity.activeOrderID != "" {
+				cancelErr := runner.dependencies.Core.CancelOrder(ctx, identity.accountID, identity.activeOrderID)
+				if cancelErr != nil && !isOrderAlreadyGone(cancelErr) {
+					runner.dependencies.Logger.Warn("session: liquidity seeder cancel failed, skipping round for identity",
+						"exchange_id", request.ExchangeID,
+						"account_id", identity.accountID,
+						"order_id", identity.activeOrderID,
+						"err", cancelErr,
+					)
+					continue
+				}
+				identity.activeOrderID = ""
+			}
+
 			if identity.side == seederSell {
 				if _, seedErr := runner.dependencies.Core.SeedInventory(ctx, core.SeedInventoryRequest{
 					AccountID:  identity.accountID,
@@ -225,7 +249,7 @@ func (runner *Runner) seedOneRound(
 					continue
 				}
 			}
-			punchErr := runner.dependencies.Core.PunchOrder(ctx, core.OrderPunchRequest{
+			orderID, punchErr := runner.dependencies.Core.PunchOrderTracked(ctx, core.OrderPunchRequest{
 				AccountID:  identity.accountID,
 				Instrument: instrument,
 				Side:       orderSide,
@@ -240,9 +264,27 @@ func (runner *Runner) seedOneRound(
 				)
 				continue
 			}
-			runner.dependencies.Logger.Info("session: liquidity seeder punched", logFields...)
+			identity.activeOrderID = orderID
+			runner.dependencies.Logger.Info("session: liquidity seeder punched",
+				append(logFields, "order_id", orderID)...,
+			)
 		}
 	}
+}
+
+// isOrderAlreadyGone returns true when a cancel error means the order
+// is no longer on the book — filled, already cancelled, or never found.
+// The seeder treats these as success: the slot is empty, place fresh.
+func isOrderAlreadyGone(err error) bool {
+	var callErr *core.CallError
+	if !errors.As(err, &callErr) {
+		return false
+	}
+	switch callErr.Reason {
+	case core.ReasonNotCancellable, core.ReasonUnknownOrder, core.ReasonCancelPending:
+		return true
+	}
+	return false
 }
 
 // filterLevelsBySide returns the subset of levels matching side.
@@ -338,15 +380,17 @@ func pivotLevels(high, low, closePrice int64, params LiquiditySeederParams, rng 
 }
 
 // randomLevelsAround scatters RandomLevelCount levels within
-// RandomLevelSpreadBps of anchor, side chosen by coin flip.
+// RandomLevelSpreadBps of anchor. Side is derived from offset sign:
+// negative offset → buy (below anchor), non-negative → sell (above anchor).
+// This prevents seeder orders from immediately crossing each other.
 func randomLevelsAround(anchor int64, params LiquiditySeederParams, rng *rand.Rand) []seedLevel {
 	spread := anchor * params.RandomLevelSpreadBps / 10_000
 	levels := make([]seedLevel, 0, params.RandomLevelCount)
 	for i := 0; i < params.RandomLevelCount; i++ {
 		offset := int64((rng.Float64()*2 - 1) * float64(spread))
-		side := core.OrderSideBuy
-		if rng.Float64() < 0.5 {
-			side = core.OrderSideSell
+		side := core.OrderSideSell
+		if offset < 0 {
+			side = core.OrderSideBuy
 		}
 		levels = append(levels, seedLevel{side: side, price: anchor + offset})
 	}
