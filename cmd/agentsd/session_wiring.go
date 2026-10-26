@@ -26,16 +26,12 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		EntryCurve:     session.DefaultEntryCurveParams(),
 		LifecycleCurve: session.DefaultLifecycleCurveParams(),
 		// HistoryLookback must be wide enough to catch the canonical
-		// market's most recent candle even across long weekends or
-		// holidays (max gap ~3.5 days from Thursday close to Monday
-		// open). 4 days covers that comfortably. Was previously 20
-		// days (~58 paged Core round-trips at 1m bars), which caused
-		// the WS subscribe retry window (12 × 5s = 60s) to exhaust
-		// before the liquidity seeder started for populations ≥ 1000
-		// agents — pullHistory blocked preOpenGroup.Wait() and delayed
-		// the seeder spawn. 4 days → ~9 pages (vs 58), completing well
-		// inside the retry window under any realistic DB latency.
-		HistoryLookback:         4 * 24 * time.Hour,
+		// market's most recent candle even across multi-week gaps
+		// (testing breaks, holidays, etc.). 20 days covers any
+		// realistic pause. SubscribeMaxRetries:36 (180s window)
+		// covers the ~58-page pullHistory round-trip so WS retries
+		// don't exhaust before the seeder places its first orders.
+		HistoryLookback:         20 * 24 * time.Hour,
 		LoadSessionsConcurrency: 50,
 		OnDemandSessionDuration: 30 * time.Minute,
 		AckReadTimeout:          5 * time.Second,
