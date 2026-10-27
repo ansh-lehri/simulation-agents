@@ -35,7 +35,7 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		// agents — pullHistory blocked preOpenGroup.Wait() and delayed
 		// the seeder spawn. 4 days → ~9 pages (vs 58), completing well
 		// inside the retry window under any realistic DB latency.
-		HistoryLookback:         4 * 24 * time.Hour,
+		HistoryLookback:         20 * 24 * time.Hour,
 		LoadSessionsConcurrency: 50,
 		OnDemandSessionDuration: 30 * time.Minute,
 		AckReadTimeout:          5 * time.Second,
@@ -44,12 +44,12 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		// instrument before retries exhaust for large populations. 36
 		// retries × 5s interval = 180s window, comfortably larger than
 		// any realistic preOpenGroup.Wait() duration.
-		SubscribeMaxRetries:     36,
-		HistoryTimeframes:       []string{core.TimeframeOneMinute},
-		ConfiguredTimeframes:    []string{core.TimeframeOneMinute},
-		MaxLookbackK:            120,
-		Perception:              session.DefaultPerceptionParams(),
-		Decision:                defaultDecisionParams(),
+		SubscribeMaxRetries:  36,
+		HistoryTimeframes:    []string{core.TimeframeOneMinute},
+		ConfiguredTimeframes: []string{core.TimeframeOneMinute},
+		MaxLookbackK:         120,
+		Perception:           session.DefaultPerceptionParams(),
+		Decision:             defaultDecisionParams(),
 		// TAction/TPresence/PunchBuffer are calibration placeholders
 		// like every other dial in this function, picked to match
 		// L2_TIER3_RUNTIME_LOOP_DESIGN.md §4's stated bands rather
@@ -71,14 +71,14 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		// anchor, continuous for the first third of the session then
 		// sparse random top-ups every 30-90s.
 		LiquiditySeeder: session.LiquiditySeederParams{
-			SellerCount:          10,
-			BuyerCount:           5,
+			SellerCount:          20,
+			BuyerCount:           3,
 			OrderSizeMin:         5,
-			OrderSizeMax:         500,
-			PivotLevelCount:      5,
-			RandomLevelCount:     3,
-			RandomLevelSpreadBps: 100,
-			ContinuousFraction:   0.25,
+			OrderSizeMax:         200,
+			PivotLevelCount:      0,
+			RandomLevelCount:     10,
+			RandomLevelSpreadBps: 15,
+			ContinuousFraction:   0.50,
 			ReentryCadenceMin:    5 * time.Second,
 			ReentryCadenceMax:    15 * time.Second,
 			GenesisOffsetBps:     100,
