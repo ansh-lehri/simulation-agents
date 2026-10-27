@@ -226,7 +226,7 @@ func defaultOrchestratorConfig() orchestrator.OrchestratorConfig {
 			// matters for on-demand existing (leased) agents or a
 			// non-positive funded_cash read; today's population is
 			// all-new, so this isn't the active ceiling yet.
-			DefaultFundedCash: 500_000,
+			DefaultFundedCash: 1000_000,
 		},
 	}
 }
