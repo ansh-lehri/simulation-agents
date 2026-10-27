@@ -26,13 +26,17 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		EntryCurve:     session.DefaultEntryCurveParams(),
 		LifecycleCurve: session.DefaultLifecycleCurveParams(),
 		// HistoryLookback must be wide enough to catch the canonical
-		// market's most recent candle even across multi-week gaps
-		// (testing breaks, holidays, etc.). 20 days covers any
-		// realistic pause. SubscribeMaxRetries:36 (180s window)
-		// covers the ~58-page pullHistory round-trip so WS retries
-		// don't exhaust before the seeder places its first orders.
+		// market's most recent candle even across long weekends or
+		// holidays (max gap ~3.5 days from Thursday close to Monday
+		// open). 4 days covers that comfortably. Was previously 20
+		// days (~58 paged Core round-trips at 1m bars), which caused
+		// the WS subscribe retry window (12 × 5s = 60s) to exhaust
+		// before the liquidity seeder started for populations ≥ 1000
+		// agents — pullHistory blocked preOpenGroup.Wait() and delayed
+		// the seeder spawn. 4 days → ~9 pages (vs 58), completing well
+		// inside the retry window under any realistic DB latency.
 		HistoryLookback:         20 * 24 * time.Hour,
-		LoadSessionsConcurrency: 50,
+		LoadSessionsConcurrency: 100,
 		OnDemandSessionDuration: 30 * time.Minute,
 		AckReadTimeout:          5 * time.Second,
 		// SubscribeMaxRetries raised from the default (12 = 60s window)
@@ -40,12 +44,12 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		// instrument before retries exhaust for large populations. 36
 		// retries × 5s interval = 180s window, comfortably larger than
 		// any realistic preOpenGroup.Wait() duration.
-		SubscribeMaxRetries:     36,
-		HistoryTimeframes:       []string{core.TimeframeOneMinute},
-		ConfiguredTimeframes:    []string{core.TimeframeOneMinute},
-		MaxLookbackK:            120,
-		Perception:              session.DefaultPerceptionParams(),
-		Decision:                defaultDecisionParams(),
+		SubscribeMaxRetries:  36,
+		HistoryTimeframes:    []string{core.TimeframeOneMinute},
+		ConfiguredTimeframes: []string{core.TimeframeOneMinute},
+		MaxLookbackK:         120,
+		Perception:           session.DefaultPerceptionParams(),
+		Decision:             defaultDecisionParams(),
 		// TAction/TPresence/PunchBuffer are calibration placeholders
 		// like every other dial in this function, picked to match
 		// L2_TIER3_RUNTIME_LOOP_DESIGN.md §4's stated bands rather
@@ -67,14 +71,14 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		// anchor, continuous for the first third of the session then
 		// sparse random top-ups every 30-90s.
 		LiquiditySeeder: session.LiquiditySeederParams{
-			SellerCount:          10,
-			BuyerCount:           5,
+			SellerCount:          25,
+			BuyerCount:           20,
 			OrderSizeMin:         5,
-			OrderSizeMax:         500,
-			PivotLevelCount:      5,
-			RandomLevelCount:     3,
-			RandomLevelSpreadBps: 100,
-			ContinuousFraction:   0.25,
+			OrderSizeMax:         300,
+			PivotLevelCount:      0,
+			RandomLevelCount:     10,
+			RandomLevelSpreadBps: 10,
+			ContinuousFraction:   0.70,
 			ReentryCadenceMin:    5 * time.Second,
 			ReentryCadenceMax:    15 * time.Second,
 			GenesisOffsetBps:     100,

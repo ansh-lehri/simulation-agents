@@ -199,7 +199,7 @@ func defaultDecisionParams() decision.Params {
 		MaxFrac:     0.35,
 		Gamma:       0.5,
 		ThetaMarket: 0.95,
-		KPlace:      1.0,
+		KPlace:      0.5,
 		SigmaExec:   0.15,
 	}
 }
@@ -213,7 +213,7 @@ func defaultDecisionParams() decision.Params {
 // know about the scenario package.
 func defaultOrchestratorConfig() orchestrator.OrchestratorConfig {
 	return orchestrator.OrchestratorConfig{
-		PopulationSize:  300,
+		PopulationSize:  1000,
 		LifecycleBuffer: 64,
 		CapitalParams: agent.CapitalParams{
 			Floor:        1_000,
@@ -226,7 +226,7 @@ func defaultOrchestratorConfig() orchestrator.OrchestratorConfig {
 			// matters for on-demand existing (leased) agents or a
 			// non-positive funded_cash read; today's population is
 			// all-new, so this isn't the active ceiling yet.
-			DefaultFundedCash: 500_000,
+			DefaultFundedCash: 1000_000,
 		},
 	}
 }
