@@ -141,19 +141,24 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("agentsd: build generator: %w", err)
 	}
 
-	// Build the bring-up spine helpers over the core client. The
-	// account-open client runs the per-agent OpenAccount + GetAccountCash
-	// pass; the capital resolver runs the three-case dispatch over the
-	// in-flight population after the handles are back.
-	accountOpenClient, err := orchestrator.NewAccountOpenClient(coreClient, logger)
-	if err != nil {
-		return fmt.Errorf("agentsd: build account-open client: %w", err)
-	}
+	// Build orchestratorConfig first — AccountOpenConcurrency is needed
+	// by the account-open client constructor below.
 	orchestratorConfig := defaultOrchestratorConfig()
 	// Hand the loaded registry's names into the orchestrator so its
 	// intake rejects any BringUp whose scenario field is non-empty
 	// and not one of the registered names.
 	orchestratorConfig.ValidScenarioNames = scenarioEngine.RegistryNames()
+
+	// Build the bring-up spine helpers over the core client. The
+	// account-open client runs the per-agent OpenAccount + GetAccountCash
+	// pass; the capital resolver runs the three-case dispatch over the
+	// in-flight population after the handles are back.
+	accountOpenClient, err := orchestrator.NewAccountOpenClient(
+		coreClient, orchestratorConfig.AccountOpenConcurrency, logger,
+	)
+	if err != nil {
+		return fmt.Errorf("agentsd: build account-open client: %w", err)
+	}
 	capitalResolver, err := orchestrator.NewCapitalResolver(orchestratorConfig.CapitalParams, logger)
 	if err != nil {
 		return fmt.Errorf("agentsd: build capital resolver: %w", err)

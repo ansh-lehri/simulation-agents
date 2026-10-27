@@ -32,7 +32,11 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		// covers the ~58-page pullHistory round-trip so WS retries
 		// don't exhaust before the seeder places its first orders.
 		HistoryLookback:         20 * 24 * time.Hour,
-		LoadSessionsConcurrency: 50,
+		// LoadSessionsConcurrency=300: for 13 000 agents, 300 concurrent
+		// JoinCanonical calls gives ~43 rounds. JoinCanonical is heavier
+		// than account-open (~50 ms vs ~10 ms) so budget ~2 s for this
+		// pass at 13k scale.
+		LoadSessionsConcurrency: 300,
 		OnDemandSessionDuration: 30 * time.Minute,
 		AckReadTimeout:          5 * time.Second,
 		// SubscribeMaxRetries raised from the default (12 = 60s window)
@@ -67,14 +71,26 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		// anchor, continuous for the first third of the session then
 		// sparse random top-ups every 30-90s.
 		LiquiditySeeder: session.LiquiditySeederParams{
-			SellerCount:          10,
-			BuyerCount:           5,
-			OrderSizeMin:         5,
-			OrderSizeMax:         500,
-			PivotLevelCount:      5,
-			RandomLevelCount:     3,
-			RandomLevelSpreadBps: 100,
-			ContinuousFraction:   0.25,
+			SellerCount: 20,
+			BuyerCount:  8,
+			OrderSizeMin: 5,
+			OrderSizeMax: 200,
+			// PivotLevelCount=0: the floor-trader pivot formula (R1=2P-low,
+			// R2=P+(high-low), R3=high+2(P-low)) is designed for daily charts.
+			// For short-timeframe sessions the latest 1m candle has a tiny
+			// high-low range, so R1 lands ~20 ticks away and leaves a depth
+			// gap between bestAsk and the first seeder level — the root cause
+			// of the price-freeze observed with PivotLevelCount>0. Disable
+			// pivots entirely; use only tight random levels instead.
+			PivotLevelCount: 0,
+			// RandomLevelCount=10 with a tight 15bps band: each seeder round
+			// places 10 levels within ±0.15% of the current price anchor
+			// (~±₹0.76 at ₹508). This fills the near-ask gap that the far
+			// pivot levels left empty and keeps depth continuous around the
+			// spread rather than clustered 20 ticks away.
+			RandomLevelCount:     10,
+			RandomLevelSpreadBps: 15,
+			ContinuousFraction:   0.50,
 			ReentryCadenceMin:    5 * time.Second,
 			ReentryCadenceMax:    15 * time.Second,
 			GenesisOffsetBps:     100,

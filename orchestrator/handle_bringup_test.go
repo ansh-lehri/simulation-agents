@@ -152,7 +152,7 @@ func newSpineHarness(t *testing.T) *spineHarness {
 
 	fakeGen := &fakePopulationGenerator{}
 	spy := newRecordingCoreAccountClient()
-	accountOpen, err := NewAccountOpenClient(spy, logger)
+	accountOpen, err := NewAccountOpenClient(spy, 10, logger)
 	if err != nil {
 		t.Fatalf("NewAccountOpenClient: %v", err)
 	}
@@ -286,14 +286,14 @@ func TestSpineRunsStagesInABCOrder(t *testing.T) {
 	if len(harness.fakeGenerator.callOrder) != 1 {
 		t.Fatalf("generator called %d times, want 1", len(harness.fakeGenerator.callOrder))
 	}
-	// Stage B: account-open ran once per new agent, in order.
+	// Stage B: account-open ran once per new agent (parallel — set equality).
 	wantOpens := []string{"new-001", "new-002", "new-003", "new-004"}
-	if !reflect.DeepEqual(harness.recordingCore.openCalls, wantOpens) {
+	if !sortedStringSliceEqual(harness.recordingCore.openCalls, wantOpens) {
 		t.Fatalf("open calls = %v, want %v", harness.recordingCore.openCalls, wantOpens)
 	}
-	// Stage B cash reads happen after every open, over each handle.
+	// Stage B cash reads run concurrently; all four handles must appear.
 	wantCash := []string{"handle-new-001", "handle-new-002", "handle-new-003", "handle-new-004"}
-	if !reflect.DeepEqual(harness.recordingCore.cashCalls, wantCash) {
+	if !sortedStringSliceEqual(harness.recordingCore.cashCalls, wantCash) {
 		t.Fatalf("cash calls = %v, want %v", harness.recordingCore.cashCalls, wantCash)
 	}
 }
@@ -376,7 +376,7 @@ func TestSpineSurfacesAccountOpenError(t *testing.T) {
 	// errors. The generator still succeeds so Stage A completes; Stage
 	// B fails and surfaces up.
 	erroringCore := &erroringCoreOpen{errorToReturn: errors.New("core 503")}
-	accountOpen, err := NewAccountOpenClient(erroringCore, discardLogger())
+	accountOpen, err := NewAccountOpenClient(erroringCore, 10, discardLogger())
 	if err != nil {
 		t.Fatalf("NewAccountOpenClient: %v", err)
 	}
@@ -427,7 +427,7 @@ func TestSpineIsDeterministicUnderFixedSeed(t *testing.T) {
 	// is exercised.
 	build := func() *Orchestrator {
 		testGenerator := buildTestGenerator(t)
-		accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), discardLogger())
+		accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), 10, discardLogger())
 		if err != nil {
 			t.Fatalf("NewAccountOpenClient: %v", err)
 		}

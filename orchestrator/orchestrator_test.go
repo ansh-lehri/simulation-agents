@@ -334,7 +334,7 @@ func TestNewOrchestratorRejectsNilDependencies(t *testing.T) {
 	rngSource := NewFixedSeedSource(1, 2)
 	config := completeOrchestratorConfig()
 	logger := discardLogger()
-	accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), logger)
+	accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), 10, logger)
 	if err != nil {
 		t.Fatalf("NewAccountOpenClient: %v", err)
 	}
@@ -429,7 +429,7 @@ func TestNewOrchestratorRejectsNilDependencies(t *testing.T) {
 
 func TestNewOrchestratorRejectsInvalidConfig(t *testing.T) {
 	logger := discardLogger()
-	accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), logger)
+	accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), 10, logger)
 	if err != nil {
 		t.Fatalf("NewAccountOpenClient: %v", err)
 	}
@@ -557,7 +557,7 @@ func TestWindDownReturnsNil(t *testing.T) {
 
 func mustBuildOrchestrator(t *testing.T, logger *slog.Logger) *Orchestrator {
 	t.Helper()
-	accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), logger)
+	accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), 10, logger)
 	if err != nil {
 		t.Fatalf("NewAccountOpenClient: %v", err)
 	}

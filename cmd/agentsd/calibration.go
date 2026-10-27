@@ -215,6 +215,10 @@ func defaultOrchestratorConfig() orchestrator.OrchestratorConfig {
 	return orchestrator.OrchestratorConfig{
 		PopulationSize:  300,
 		LifecycleBuffer: 64,
+		// AccountOpenConcurrency=300: for 13 000 agents this yields
+		// ~43 concurrent batches × ~10 ms/round-trip ≈ 430 ms for the
+		// whole account-open pass. Safe ceiling for Core's connection pool.
+		AccountOpenConcurrency: 300,
 		CapitalParams: agent.CapitalParams{
 			Floor:        1_000,
 			JitterSpread: 0.1,

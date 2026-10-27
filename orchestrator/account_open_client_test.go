@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -69,7 +70,7 @@ func (spy *spyCoreAccountClient) GetAccountCash(ctx context.Context, accountID s
 
 func mustBuildAccountOpenClient(t *testing.T, spy *spyCoreAccountClient) *AccountOpenClient {
 	t.Helper()
-	client, err := NewAccountOpenClient(spy, discardLogger())
+	client, err := NewAccountOpenClient(spy, 10, discardLogger())
 	if err != nil {
 		t.Fatalf("NewAccountOpenClient: %v", err)
 	}
@@ -92,10 +93,13 @@ func newTestAgents(count int) []agent.Agent {
 // ---- NewAccountOpenClient -----------------------------------------
 
 func TestNewAccountOpenClientRejectsNilDependencies(t *testing.T) {
-	if _, err := NewAccountOpenClient(nil, discardLogger()); err == nil {
+	if _, err := NewAccountOpenClient(nil, 10, discardLogger()); err == nil {
 		t.Fatalf("expected nil coreClient error, got nil")
 	}
-	if _, err := NewAccountOpenClient(newSpyCoreAccountClient(), nil); err == nil {
+	if _, err := NewAccountOpenClient(newSpyCoreAccountClient(), 0, discardLogger()); err == nil {
+		t.Fatalf("expected zero concurrency error, got nil")
+	}
+	if _, err := NewAccountOpenClient(newSpyCoreAccountClient(), 10, nil); err == nil {
 		t.Fatalf("expected nil logger error, got nil")
 	}
 }
@@ -119,6 +123,7 @@ func TestOpenEmptyNewSliceIsNoCoreCall(t *testing.T) {
 }
 
 func TestOpenCallsOpenAccountThenGetAccountCashInOrder(t *testing.T) {
+	// Agents run in parallel — assert set coverage, not input order.
 	spy := newSpyCoreAccountClient()
 	client := mustBuildAccountOpenClient(t, spy)
 	newAgents := newTestAgents(3)
@@ -126,15 +131,15 @@ func TestOpenCallsOpenAccountThenGetAccountCashInOrder(t *testing.T) {
 	if err := client.Open(context.Background(), newAgents); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	// Opens happen once per agent, in input order.
-	wantOpenCalls := []string{"new-001", "new-002", "new-003"}
-	if !reflectStringSliceEqual(spy.openCalls, wantOpenCalls) {
-		t.Fatalf("open calls = %v, want %v", spy.openCalls, wantOpenCalls)
+	// OpenAccount called once per agent (order undefined).
+	wantOpenSet := []string{"new-001", "new-002", "new-003"}
+	if !sortedStringSliceEqual(spy.openCalls, wantOpenSet) {
+		t.Fatalf("open call set = %v, want %v", spy.openCalls, wantOpenSet)
 	}
-	// Cash reads happen once per handle, in input order, AFTER opens.
-	wantCashCalls := []string{"handle-new-001", "handle-new-002", "handle-new-003"}
-	if !reflectStringSliceEqual(spy.cashCalls, wantCashCalls) {
-		t.Fatalf("cash calls = %v, want %v", spy.cashCalls, wantCashCalls)
+	// GetAccountCash called once per handle (order undefined).
+	wantCashSet := []string{"handle-new-001", "handle-new-002", "handle-new-003"}
+	if !sortedStringSliceEqual(spy.cashCalls, wantCashSet) {
+		t.Fatalf("cash call set = %v, want %v", spy.cashCalls, wantCashSet)
 	}
 }
 
@@ -165,6 +170,10 @@ func TestOpenPopulatesHandleAndFundedCashPerAgent(t *testing.T) {
 // ---- Open (failure paths) -----------------------------------------
 
 func TestOpenSurfacesOpenAccountError(t *testing.T) {
+	// Under parallel execution all goroutines are in flight concurrently.
+	// new-002 fails in OpenAccount; new-001 and new-003 complete both
+	// calls. The test asserts the error propagates and the failing agent
+	// carries no handle.
 	spy := newSpyCoreAccountClient()
 	openErr := errors.New("core 503")
 	spy.openErrByAgentUserID = map[string]error{"new-002": openErr}
@@ -175,26 +184,25 @@ func TestOpenSurfacesOpenAccountError(t *testing.T) {
 	if err == nil || !errors.Is(err, openErr) {
 		t.Fatalf("expected wrapped OpenAccount error, got %v", err)
 	}
-	// The pass stopped at the failing agent — no further opens, no
-	// cash reads at all.
-	if len(spy.openCalls) != 2 {
-		t.Fatalf("expected 2 open attempts before failure, got %d: %v", len(spy.openCalls), spy.openCalls)
+	// All three goroutines ran their OpenAccount call.
+	if len(spy.openCalls) != 3 {
+		t.Fatalf("expected 3 open calls, got %d: %v", len(spy.openCalls), spy.openCalls)
 	}
-	if len(spy.cashCalls) != 0 {
-		t.Fatalf("expected zero cash reads on open failure, got %v", spy.cashCalls)
+	// new-001 and new-003 succeeded and proceeded to GetAccountCash;
+	// new-002 did not (OpenAccount returned an error).
+	if len(spy.cashCalls) != 2 {
+		t.Fatalf("expected 2 cash reads (succeeding agents only), got %d: %v",
+			len(spy.cashCalls), spy.cashCalls)
 	}
-	// Agent 0 still has its handle set (the open before the failing
-	// one succeeded); agent 1 and 2 do not.
-	if newAgents[0].CapitalHandle == "" {
-		t.Fatalf("agent 0 missing handle after a later open failure")
-	}
-	if newAgents[1].CapitalHandle != "" || newAgents[2].CapitalHandle != "" {
-		t.Fatalf("agents past the failing index carry a handle: %q %q",
-			newAgents[1].CapitalHandle, newAgents[2].CapitalHandle)
+	// The failing agent (index 1, new-002) carries no handle.
+	if newAgents[1].CapitalHandle != "" {
+		t.Fatalf("failing agent (new-002) unexpectedly has handle %q", newAgents[1].CapitalHandle)
 	}
 }
 
 func TestOpenSurfacesGetAccountCashError(t *testing.T) {
+	// new-002's GetAccountCash fails; new-001 and new-003 succeed. All
+	// three cash reads run concurrently, so all three calls are made.
 	spy := newSpyCoreAccountClient()
 	cashErr := errors.New("core 504")
 	spy.cashErrByAccountID = map[string]error{"handle-new-002": cashErr}
@@ -205,20 +213,22 @@ func TestOpenSurfacesGetAccountCashError(t *testing.T) {
 	if err == nil || !errors.Is(err, cashErr) {
 		t.Fatalf("expected wrapped GetAccountCash error, got %v", err)
 	}
-	// All three opens succeeded before the cash reads began.
+	// All three opens succeeded.
 	if len(spy.openCalls) != 3 {
-		t.Fatalf("expected 3 opens before cash reads, got %d", len(spy.openCalls))
+		t.Fatalf("expected 3 opens, got %d", len(spy.openCalls))
 	}
-	// Cash loop stopped at the failing index: calls for 1 and 2, not 3.
-	if len(spy.cashCalls) != 2 {
-		t.Fatalf("expected 2 cash reads before failure, got %d: %v", len(spy.cashCalls), spy.cashCalls)
+	// All three cash reads ran concurrently (two succeed, one fails).
+	if len(spy.cashCalls) != 3 {
+		t.Fatalf("expected 3 cash reads (all concurrent), got %d: %v", len(spy.cashCalls), spy.cashCalls)
 	}
-	// Agents past the failing cash read keep handle but no FundedCash.
-	if newAgents[2].CapitalHandle == "" {
-		t.Fatalf("agent 2 missing handle after a cash read failure")
+	// The failing agent (index 1, new-002) has no FundedCash.
+	if newAgents[1].FundedCash != 0 {
+		t.Fatalf("failing agent (new-002) carries FundedCash: %d", newAgents[1].FundedCash)
 	}
-	if newAgents[2].FundedCash != 0 {
-		t.Fatalf("agent 2 carries FundedCash after a cash read failure: %d", newAgents[2].FundedCash)
+	// Succeeding agents keep their handles (OpenAccount never failed).
+	if newAgents[0].CapitalHandle == "" || newAgents[2].CapitalHandle == "" {
+		t.Fatalf("succeeding agents missing handles: [0]=%q [2]=%q",
+			newAgents[0].CapitalHandle, newAgents[2].CapitalHandle)
 	}
 }
 
@@ -264,6 +274,27 @@ func reflectStringSliceEqual(got, want []string) bool {
 	}
 	for index := range got {
 		if got[index] != want[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// sortedStringSliceEqual returns true when got and want contain the same
+// elements regardless of order. Used for parallel-execution tests where
+// call ordering is non-deterministic.
+func sortedStringSliceEqual(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	g := make([]string, len(got))
+	w := make([]string, len(want))
+	copy(g, got)
+	copy(w, want)
+	sort.Strings(g)
+	sort.Strings(w)
+	for i := range g {
+		if g[i] != w[i] {
 			return false
 		}
 	}

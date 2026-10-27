@@ -32,6 +32,15 @@ type OrchestratorConfig struct {
 	// just carries them.
 	CapitalParams agent.CapitalParams
 
+	// AccountOpenConcurrency caps the fan-out of the account-open pass
+	// (OpenAccount + GetAccountCash per agent). Each agent's two calls
+	// run sequentially but all agents run in parallel up to this ceiling
+	// so a large new-agent slice does not hammer Core. Must be positive.
+	// Rule of thumb: ceil(PopulationSize / 50) gives ~50 ms latency per
+	// batch at a 10 ms round-trip; 300 handles 13 000 agents in ~
+	// 43 rounds (~430 ms total).
+	AccountOpenConcurrency int
+
 	// ValidScenarioNames is the accept-set the inbound bring-up
 	// validator consults for BringUpRequest.Scenario. A non-empty
 	// scenario name must be in this set or the bring-up is rejected
@@ -57,6 +66,9 @@ func (config OrchestratorConfig) Validate() error {
 	}
 	if config.LifecycleBuffer < 0 {
 		return fmt.Errorf("orchestrator: LifecycleBuffer %d must be non-negative", config.LifecycleBuffer)
+	}
+	if config.AccountOpenConcurrency <= 0 {
+		return fmt.Errorf("orchestrator: AccountOpenConcurrency %d must be positive", config.AccountOpenConcurrency)
 	}
 	seenScenario := make(map[string]struct{}, len(config.ValidScenarioNames))
 	for _, scenarioName := range config.ValidScenarioNames {

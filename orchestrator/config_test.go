@@ -15,8 +15,9 @@ import (
 // (warn-on-canonical, no-warn-on-on-demand) that was its real target.
 func completeOrchestratorConfig() OrchestratorConfig {
 	return OrchestratorConfig{
-		PopulationSize:  100,
-		LifecycleBuffer: 16,
+		PopulationSize:         100,
+		LifecycleBuffer:        16,
+		AccountOpenConcurrency: 10,
 		CapitalParams: agent.CapitalParams{
 			Floor:             1_000,
 			JitterSpread:      0.1,
