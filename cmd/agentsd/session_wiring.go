@@ -36,7 +36,7 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		// the seeder spawn. 4 days → ~9 pages (vs 58), completing well
 		// inside the retry window under any realistic DB latency.
 		HistoryLookback:         20 * 24 * time.Hour,
-		LoadSessionsConcurrency: 50,
+		LoadSessionsConcurrency: 100,
 		OnDemandSessionDuration: 30 * time.Minute,
 		AckReadTimeout:          5 * time.Second,
 		// SubscribeMaxRetries raised from the default (12 = 60s window)
@@ -71,14 +71,14 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 		// anchor, continuous for the first third of the session then
 		// sparse random top-ups every 30-90s.
 		LiquiditySeeder: session.LiquiditySeederParams{
-			SellerCount:          20,
-			BuyerCount:           3,
+			SellerCount:          25,
+			BuyerCount:           20,
 			OrderSizeMin:         5,
-			OrderSizeMax:         200,
+			OrderSizeMax:         300,
 			PivotLevelCount:      0,
 			RandomLevelCount:     10,
-			RandomLevelSpreadBps: 15,
-			ContinuousFraction:   0.50,
+			RandomLevelSpreadBps: 10,
+			ContinuousFraction:   0.70,
 			ReentryCadenceMin:    5 * time.Second,
 			ReentryCadenceMax:    15 * time.Second,
 			GenesisOffsetBps:     100,
