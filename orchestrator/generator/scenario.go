@@ -76,26 +76,54 @@ type CurveEffective struct {
 	ReentryRate float64
 }
 
-// ScenarioProvider resolves a scenario name against a country into the two
-// output shapes the orchestrator consumes: trait-draw overrides for the
-// generator (EffectiveParams) and lifecycle-curve overrides for the
-// session handoff (CurveEffective). An empty scenario name means baseline
-// on both outputs; both return values are nil in that case.
+// SessionEffective carries direct per-scenario overrides for session-level
+// parameters that are not per-agent traits: the liquidity seeder's
+// book-structure dials and the global decision crossing threshold.
+// These are set directly in each scenario's blob (no ruler math) because
+// they describe the structural character of the market, not a shifted
+// distribution over agent traits.
+//
+// A nil *SessionEffective (empty scenario or canonical session) means
+// every dial stays at the composition-root default.
+type SessionEffective struct {
+	// Seeder book-structure overrides. See session.LiquiditySeederParams
+	// for field semantics.
+	SellerCount          int
+	BuyerCount           int
+	OrderSizeMin         int64
+	OrderSizeMax         int64
+	RandomLevelSpreadBps int64
+	PivotLevelCount      int
+	ContinuousFraction   float64
+
+	// ThetaMarket is the conviction threshold above which an agent sends
+	// a market (crossing) order rather than a passive limit. Scenarios
+	// set this directly: calm needs a structurally higher bar than thin,
+	// not just a softer aggressiveness distribution.
+	ThetaMarket float64
+}
+
+// ScenarioProvider resolves a scenario name against a country into the
+// three output shapes the orchestrator consumes: trait-draw overrides
+// for the generator (EffectiveParams), lifecycle-curve overrides
+// (CurveEffective), and session-level structural overrides
+// (SessionEffective). An empty scenario name means baseline on all
+// outputs; all three return values are nil in that case.
 type ScenarioProvider interface {
-	Effective(country, scenarioName string) (*EffectiveParams, *CurveEffective)
+	Effective(country, scenarioName string) (*EffectiveParams, *CurveEffective, *SessionEffective)
 }
 
 // NoOpScenarioProvider is the baseline provider: every call returns nil
-// for both outputs so every draw runs against the baseline calibration
-// and no lifecycle-curve shift is carried through to the session handoff.
+// for all outputs so every draw runs against the baseline calibration
+// and no overrides are carried through to the session.
 // This is the provider the composition root wires until the scenario
 // engine lands.
 type NoOpScenarioProvider struct{}
 
-// Effective returns the baseline no-shift pair for any input. The inputs
+// Effective returns the baseline no-shift triple for any input. The inputs
 // are accepted to satisfy the ScenarioProvider interface; they are not
 // consulted.
-func (NoOpScenarioProvider) Effective(country, scenarioName string) (*EffectiveParams, *CurveEffective) {
+func (NoOpScenarioProvider) Effective(country, scenarioName string) (*EffectiveParams, *CurveEffective, *SessionEffective) {
 	_, _ = country, scenarioName
-	return nil, nil
+	return nil, nil, nil
 }

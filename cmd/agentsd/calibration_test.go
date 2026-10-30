@@ -39,7 +39,7 @@ func TestScenarioEngineBuildsWithDefaults(t *testing.T) {
 	// Resolving the empty name must stay the baseline identity path —
 	// the composition root relies on this to leave the no-scenario
 	// bring-up byte-identical to pre-scenario behaviour.
-	effective, curve := engine.Effective("US", "")
+	effective, curve, _ := engine.Effective("US", "")
 	if effective != nil || curve != nil {
 		t.Fatalf("empty name should produce (nil, nil), got (%v, %v)", effective, curve)
 	}
@@ -48,7 +48,7 @@ func TestScenarioEngineBuildsWithDefaults(t *testing.T) {
 	// pipeline runs through shove / invert / applySwitches / curveFrom
 	// for each name.
 	for _, scenarioName := range engine.RegistryNames() {
-		effective, curve := engine.Effective("US", scenarioName)
+		effective, curve, _ := engine.Effective("US", scenarioName)
 		if effective == nil {
 			t.Errorf("preset %q returned nil EffectiveParams", scenarioName)
 		}

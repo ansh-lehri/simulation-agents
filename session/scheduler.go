@@ -59,27 +59,38 @@ func NewLiveScheduler(
 // and then runs the two-cadence tick loop synchronously until the
 // session ends or ctx is cancelled. This is the synchronous tail of the
 // per-exchange goroutine — it blocks for the life of the session.
+//
+// If sessionEffective carries a non-zero ThetaMarket, the scheduler
+// runs against a shallow copy of itself with that override applied so
+// the global params struct is not mutated across concurrent sessions.
 func (sched *LiveScheduler) StartScheduler(
 	ctx context.Context,
 	request transport.BringUpRequest,
 	population generator.Population,
 	curveEffective *generator.CurveEffective,
+	sessionEffective *generator.SessionEffective,
 	lifecycleChannel chan<- LifecycleDecision,
 ) {
-	ws := sched.buildWorkingSet(ctx, request, population)
-	curves := buildLifecycleCurves(curveEffective, sched.params.LifecycleCurve, ws.sessionRNG)
-	punchCh := make(chan core.OrderPunchRequest, sched.params.PunchBuffer)
-	workers := sched.params.DispatcherWorkers
+	s := sched
+	if sessionEffective != nil && sessionEffective.ThetaMarket > 0 {
+		derived := *sched
+		derived.params.Decision.ThetaMarket = sessionEffective.ThetaMarket
+		s = &derived
+	}
+	ws := s.buildWorkingSet(ctx, request, population)
+	curves := buildLifecycleCurves(curveEffective, s.params.LifecycleCurve, ws.sessionRNG)
+	punchCh := make(chan core.OrderPunchRequest, s.params.PunchBuffer)
+	workers := s.params.DispatcherWorkers
 	if workers <= 0 {
 		workers = 1
 	}
 	for range workers {
-		go sched.runDispatcher(ctx, request.ExchangeID, punchCh)
+		go s.runDispatcher(ctx, request.ExchangeID, punchCh)
 	}
-	sched.runLoop(ctx, request, ws, curves, punchCh, lifecycleChannel)
+	s.runLoop(ctx, request, ws, curves, punchCh, lifecycleChannel)
 
 	if request.SessionType == agent.PopulationCanonical {
-		sched.emitCanonicalCloseEffects(ctx, request, ws, lifecycleChannel)
+		s.emitCanonicalCloseEffects(ctx, request, ws, lifecycleChannel)
 	}
 	// On-demand sessions have no close-of-session effects to compute or
 	// emit (no churn model, no persisted capital to evolve) — the

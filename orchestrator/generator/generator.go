@@ -187,7 +187,7 @@ func (generator *Generator) GenerateOnDemand(
 		"scenario", scenarioName,
 	)
 
-	effectiveShifts, _ := generator.scenarioProvider.Effective(country, scenarioName)
+	effectiveShifts, _, _ := generator.scenarioProvider.Effective(country, scenarioName)
 
 	leasedIDs, err := generator.leaseAllocator.SelectAvailable(ctx, country, populationSize, exchangeID)
 	if err != nil {

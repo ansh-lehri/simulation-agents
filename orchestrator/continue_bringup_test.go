@@ -631,10 +631,10 @@ type programmableScenarioProvider struct {
 	curveEffectiveToReturn  *generator.CurveEffective
 }
 
-func (fake *programmableScenarioProvider) Effective(country, scenarioName string) (*generator.EffectiveParams, *generator.CurveEffective) {
+func (fake *programmableScenarioProvider) Effective(country, scenarioName string) (*generator.EffectiveParams, *generator.CurveEffective, *generator.SessionEffective) {
 	_, _ = country, scenarioName
 	fake.effectiveCount.Add(1)
-	return fake.effectiveParamsToReturn, fake.curveEffectiveToReturn
+	return fake.effectiveParamsToReturn, fake.curveEffectiveToReturn, nil
 }
 
 type recordingSessionRunner struct {
@@ -646,9 +646,10 @@ func (fake *recordingSessionRunner) Run(
 	request transport.BringUpRequest,
 	population generator.Population,
 	curveEffective *generator.CurveEffective,
+	sessionEffective *generator.SessionEffective,
 	lifecycleChannel chan<- session.LifecycleDecision,
 ) {
-	_, _, _, _, _ = ctx, request, population, curveEffective, lifecycleChannel
+	_, _, _, _, _, _ = ctx, request, population, curveEffective, sessionEffective, lifecycleChannel
 	fake.runCount.Add(1)
 }
 

@@ -437,9 +437,10 @@ func (fake *blockingSessionRunner) Run(
 	request transport.BringUpRequest,
 	population generator.Population,
 	curveEffective *generator.CurveEffective,
+	sessionEffective *generator.SessionEffective,
 	lifecycleChannel chan<- session.LifecycleDecision,
 ) {
-	_, _, _ = request, population, curveEffective
+	_, _, _, _ = request, population, curveEffective, sessionEffective
 	fake.ranCount.Add(1)
 	<-ctx.Done()
 	fake.sawCancel.Store(true)
