@@ -135,11 +135,12 @@ func thinPreset() ScenarioBlob {
 		// All values are starting-point calibration placeholders; tune until
 		// median spread reaches the target multiple above baseline.
 		Session: &generator.SessionEffective{
-			SellerCount:          12,
-			BuyerCount:           10,
-			OrderSizeMin:         3,
+			SellerCount:          18,
+			BuyerCount:           12,
+			OrderSizeMin:         5,
 			OrderSizeMax:         80,
 			RandomLevelSpreadBps: 30,
+			ContinuousFraction:   0.85,
 			ThetaMarket:          0.55,
 		},
 	}
@@ -181,12 +182,12 @@ func calmPreset() ScenarioBlob {
 		// All values are starting-point calibration placeholders; tune until
 		// price range width reaches the target fraction of baseline.
 		Session: &generator.SessionEffective{
-			SellerCount:          35,
-			BuyerCount:           28,
-			OrderSizeMin:         10,
-			OrderSizeMax:         200,
-			RandomLevelSpreadBps: 5,
-			ThetaMarket:          0.75,
+			SellerCount:          50,
+			BuyerCount:           45,
+			OrderSizeMin:         15,
+			OrderSizeMax:         150,
+			RandomLevelSpreadBps: 3,
+			ThetaMarket:          0.85,
 		},
 	}
 }
@@ -220,10 +221,10 @@ func busyPreset() ScenarioBlob {
 		// All values are starting-point calibration placeholders; tune until
 		// trades-per-minute reaches the target multiple above baseline.
 		Session: &generator.SessionEffective{
-			SellerCount:          40,
-			BuyerCount:           35,
+			SellerCount:          45,
+			BuyerCount:           40,
 			OrderSizeMin:         5,
-			OrderSizeMax:         500,
+			OrderSizeMax:         300,
 			RandomLevelSpreadBps: 8,
 			ThetaMarket:          0.40,
 		},
