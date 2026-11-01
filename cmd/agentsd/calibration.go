@@ -215,10 +215,13 @@ func defaultOrchestratorConfig() orchestrator.OrchestratorConfig {
 	return orchestrator.OrchestratorConfig{
 		PopulationSize:  1000,
 		LifecycleBuffer: 64,
-		// AccountOpenConcurrency=300: fans out all agents in one parallel
-		// batch. With 300 goroutines and ~150 ms RTT, Stage B completes in
-		// ~1-3 s instead of ~90-300 s for the old serial loop.
-		AccountOpenConcurrency: 300,
+		// AccountOpenConcurrency=50: bounded by the market-simulator's DB
+		// pool (StoreMaxConns=32) and the broker reads ReadTimeout (2s).
+		// At 50 concurrent goroutines the queue wait for the last slot is
+		// ≈ ceil(50/32) × ~200ms ≈ 300ms — comfortably inside the 2s
+		// window. 300 agents open in ~3-4s (vs ~90s serial), a 20× gain
+		// without overwhelming the pool.
+		AccountOpenConcurrency: 50,
 		CapitalParams: agent.CapitalParams{
 			Floor:        1_000,
 			JitterSpread: 0.1,
