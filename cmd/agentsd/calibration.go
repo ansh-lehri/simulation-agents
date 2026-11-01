@@ -215,6 +215,10 @@ func defaultOrchestratorConfig() orchestrator.OrchestratorConfig {
 	return orchestrator.OrchestratorConfig{
 		PopulationSize:  1000,
 		LifecycleBuffer: 64,
+		// AccountOpenConcurrency=300: fans out all agents in one parallel
+		// batch. With 300 goroutines and ~150 ms RTT, Stage B completes in
+		// ~1-3 s instead of ~90-300 s for the old serial loop.
+		AccountOpenConcurrency: 300,
 		CapitalParams: agent.CapitalParams{
 			Floor:        1_000,
 			JitterSpread: 0.1,
