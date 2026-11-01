@@ -83,7 +83,14 @@ func (client *AccountOpenClient) Open(ctx context.Context, newAgents []agent.Age
 
 	sem := make(chan struct{}, client.concurrency)
 	var mu sync.Mutex
-	eg, egCtx := errgroup.WithContext(ctx)
+	// Use a plain errgroup (no derived context) so that one goroutine
+	// returning an error does NOT cancel the context of the other
+	// in-flight HTTP calls. errgroup.WithContext would cancel egCtx on
+	// the first failure, which tears down every live HTTP connection and
+	// floods the market-simulator with "context canceled" DB errors.
+	// The parent ctx is passed directly so process-level cancellation
+	// (BringUpTimeout, shutdown) still propagates correctly.
+	var eg errgroup.Group
 
 	for index := range newAgents {
 		index := index
@@ -91,14 +98,14 @@ func (client *AccountOpenClient) Open(ctx context.Context, newAgents []agent.Age
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			handle, err := client.coreClient.OpenAccount(egCtx, string(newAgents[index].ID))
+			handle, err := client.coreClient.OpenAccount(ctx, string(newAgents[index].ID))
 			if err != nil {
 				return fmt.Errorf(
 					"orchestrator: open account for %s: %w", newAgents[index].ID, err,
 				)
 			}
 
-			cash, err := client.coreClient.GetAccountCash(egCtx, handle)
+			cash, err := client.coreClient.GetAccountCash(ctx, handle)
 			if err != nil {
 				return fmt.Errorf(
 					"orchestrator: read account cash for %s: %w", newAgents[index].ID, err,
