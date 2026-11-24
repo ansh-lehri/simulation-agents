@@ -95,11 +95,11 @@ func (orchestrator *Orchestrator) continueBringUp(
 		}
 	}
 
-	// P5 — resolve the scenario curve, register sessions:active,
-	// and spawn the runner. The curve is resolved once here so both
-	// the session-store record and the runner receive the same value
+	// P5 — resolve the scenario effectves, register sessions:active,
+	// and spawn the runner. Both effectves are resolved once here so
+	// the session-store record and the runner receive the same values
 	// without a second provider call.
-	curveEffective := orchestrator.resolveCurveEffective(request)
+	curveEffective, sessionEffective := orchestrator.resolveScenarioEffectives(request)
 	lifecycleChannel := make(chan session.LifecycleDecision, orchestrator.config.LifecycleBuffer)
 	if err := orchestrator.registerActiveSession(ctx, request, curveEffective); err != nil {
 		orchestrator.failureReporter.FailBringUp(request, err)
@@ -133,7 +133,7 @@ func (orchestrator *Orchestrator) continueBringUp(
 		// orchestrator never starts draining while the goroutine might
 		// still be sending on lifecycleChannel.
 		defer close(lifecycleChannel)
-		orchestrator.sessionRunner.Run(sessionCtx, request, population, curveEffective, lifecycleChannel)
+		orchestrator.sessionRunner.Run(sessionCtx, request, population, curveEffective, sessionEffective, lifecycleChannel)
 	}()
 }
 
@@ -294,18 +294,19 @@ func (orchestrator *Orchestrator) setOnDemandRuntimeTipper(
 	return nil
 }
 
-// resolveCurveEffective asks the scenario provider for the lifecycle
-// curve override for this bring-up. Returns nil for canonical sessions
-// and for on-demand sessions with no scenario — both map to baseline
-// lifecycle curves in the scheduler.
-func (orchestrator *Orchestrator) resolveCurveEffective(
+// resolveScenarioEffectives asks the scenario provider for the lifecycle
+// curve override and the session-level structural override for this
+// bring-up. Returns (nil, nil) for canonical sessions and for
+// on-demand sessions with no scenario — both map to baseline behaviour
+// in the scheduler and seeder.
+func (orchestrator *Orchestrator) resolveScenarioEffectives(
 	request transport.BringUpRequest,
-) *generator.CurveEffective {
+) (*generator.CurveEffective, *generator.SessionEffective) {
 	if request.SessionType != SessionTypeOnDemand || request.Scenario == "" {
-		return nil
+		return nil, nil
 	}
-	_, curveEffective := orchestrator.scenarioProvider.Effective(request.Country, request.Scenario)
-	return curveEffective
+	_, curveEffective, sessionEffective := orchestrator.scenarioProvider.Effective(request.Country, request.Scenario)
+	return curveEffective, sessionEffective
 }
 
 // registerActiveSession writes the per-exchange session params under

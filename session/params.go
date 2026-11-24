@@ -237,11 +237,18 @@ type LiquiditySeederParams struct {
 	ReentryCadenceMin time.Duration
 	ReentryCadenceMax time.Duration
 
-	// GenesisOffsetBps anchors price levels off a reference price
-	// (± this offset) when no prior OHLCV bar exists at all — a true
-	// cold canonical start. On-demand never hits this path: it always
-	// has canonical history to pull.
+	// GenesisOffsetBps is the spread (in basis points of
+	// GenesisReferencePrice) used when building genesis levels. Levels
+	// are scattered within ±GenesisOffsetBps of GenesisReferencePrice.
 	GenesisOffsetBps int64
+
+	// GenesisReferencePrice is the fallback anchor price (in ticks)
+	// used by the seeder when no candle history and no live quote exist
+	// yet — a cold start where the exchange has never tape-learned the
+	// instrument. Paired with GenesisOffsetBps for level spread. Zero
+	// disables genesis seeding entirely (returns nil → seeder skips
+	// the instrument until real price data arrives).
+	GenesisReferencePrice int64
 }
 
 // DefaultPerceptionParams returns the baseline calibration for agent

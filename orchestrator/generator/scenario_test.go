@@ -18,7 +18,7 @@ func TestNoOpScenarioProviderReturnsBaselineForAnyInput(t *testing.T) {
 		{"US", "polarized_optimism"},
 	}
 	for _, testCase := range cases {
-		effectiveShifts, lifecycleCurveShifts := provider.Effective(testCase.country, testCase.scenarioName)
+		effectiveShifts, lifecycleCurveShifts, _ := provider.Effective(testCase.country, testCase.scenarioName)
 		if effectiveShifts != nil {
 			t.Fatalf("NoOp returned non-nil trait shifts for (%q,%q): %+v",
 				testCase.country, testCase.scenarioName, effectiveShifts)

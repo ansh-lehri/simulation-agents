@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
+
+	"golang.org/x/sync/errgroup"
 
 	"simulation-agents/agent"
 	"simulation-agents/core"
@@ -33,44 +36,41 @@ type CoreAccountClient interface {
 // broker ceiling.
 //
 // There is no bulk account-open endpoint on Core today, so this client
-// loops per agent. The shape of the public method (one call per
-// bring-up over the full new-agent slice) is designed so swapping in a
-// bulk Core endpoint later is a single-method change here.
+// fans out one goroutine per agent, bounded by concurrency. Each
+// goroutine runs OpenAccount then GetAccountCash sequentially for its
+// agent — the cash read requires the handle — but all agents run
+// concurrently, reducing Stage B from O(N × RTT) to O(ceil(N/concurrency) × RTT).
 type AccountOpenClient struct {
-	coreClient CoreAccountClient
-	logger     *slog.Logger
+	coreClient  CoreAccountClient
+	concurrency int
+	logger      *slog.Logger
 }
 
 // NewAccountOpenClient wires an AccountOpenClient from its dependencies.
-// Both are required; a nil Core client would make the first bring-up
-// panic in a far-away stack frame.
-func NewAccountOpenClient(coreClient CoreAccountClient, logger *slog.Logger) (*AccountOpenClient, error) {
+// concurrency caps the parallel fan-out; it must be positive (comes from
+// OrchestratorConfig.AccountOpenConcurrency).
+func NewAccountOpenClient(coreClient CoreAccountClient, concurrency int, logger *slog.Logger) (*AccountOpenClient, error) {
 	if coreClient == nil {
 		return nil, fmt.Errorf("orchestrator: coreClient is required")
+	}
+	if concurrency <= 0 {
+		return nil, fmt.Errorf("orchestrator: concurrency %d must be positive", concurrency)
 	}
 	if logger == nil {
 		return nil, fmt.Errorf("orchestrator: logger is required")
 	}
-	return &AccountOpenClient{coreClient: coreClient, logger: logger}, nil
+	return &AccountOpenClient{coreClient: coreClient, concurrency: concurrency, logger: logger}, nil
 }
 
 // Open runs the account-open pass over the newly minted agents in a
-// bring-up: first open an account for each (filling CapitalHandle),
-// then read each account's funded cash (filling FundedCash). An empty
-// slice is a no-op — canonical bring-ups with no shortfall produce zero
-// new agents and must not emit a Core call.
+// bring-up. An empty slice is a no-op — canonical bring-ups with no
+// shortfall produce zero new agents and must not emit a Core call.
 //
-// Partial-failure stance: fail the whole pass on the first error. The
-// orchestrator's async tail is never spawned on a failed pass, so no
-// durable row and no runtime snapshot is produced for the half-opened
-// agents. Core's OpenAccount is get-or-create, so a retried bring-up
-// re-opens idempotently.
-//
-// The two loops run sequentially (opens, then cash reads) because
-// GetAccountCash needs the handle each OpenAccount returns. A future
-// Core bulk endpoint would fold both into one request; today the shape
-// of this method is already that of a bulk call — one input slice, one
-// error return.
+// Each agent's OpenAccount + GetAccountCash pair runs sequentially within
+// its goroutine (cash read needs the handle), but all agents run in
+// parallel bounded by the client's concurrency ceiling. The first error
+// from any goroutine cancels the rest and is returned; Core's OpenAccount
+// is get-or-create, so a retried bring-up re-opens idempotently.
 func (client *AccountOpenClient) Open(ctx context.Context, newAgents []agent.Agent) error {
 	if len(newAgents) == 0 {
 		return nil
@@ -78,26 +78,50 @@ func (client *AccountOpenClient) Open(ctx context.Context, newAgents []agent.Age
 	client.logger.Info(
 		"account-open pass start",
 		"new_agent_count", len(newAgents),
+		"concurrency", client.concurrency,
 	)
 
-	for index := range newAgents {
-		accountHandle, err := client.coreClient.OpenAccount(ctx, string(newAgents[index].ID))
-		if err != nil {
-			return fmt.Errorf(
-				"orchestrator: open account for %s: %w", newAgents[index].ID, err,
-			)
-		}
-		newAgents[index].CapitalHandle = accountHandle
-	}
+	sem := make(chan struct{}, client.concurrency)
+	var mu sync.Mutex
+	// Use a plain errgroup (no derived context) so that one goroutine
+	// returning an error does NOT cancel the context of the other
+	// in-flight HTTP calls. errgroup.WithContext would cancel egCtx on
+	// the first failure, which tears down every live HTTP connection and
+	// floods the market-simulator with "context canceled" DB errors.
+	// The parent ctx is passed directly so process-level cancellation
+	// (BringUpTimeout, shutdown) still propagates correctly.
+	var eg errgroup.Group
 
 	for index := range newAgents {
-		cash, err := client.coreClient.GetAccountCash(ctx, newAgents[index].CapitalHandle)
-		if err != nil {
-			return fmt.Errorf(
-				"orchestrator: read account cash for %s: %w", newAgents[index].ID, err,
-			)
-		}
-		newAgents[index].FundedCash = cash.TradingCash
+		index := index
+		eg.Go(func() error {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			handle, err := client.coreClient.OpenAccount(ctx, string(newAgents[index].ID))
+			if err != nil {
+				return fmt.Errorf(
+					"orchestrator: open account for %s: %w", newAgents[index].ID, err,
+				)
+			}
+
+			cash, err := client.coreClient.GetAccountCash(ctx, handle)
+			if err != nil {
+				return fmt.Errorf(
+					"orchestrator: read account cash for %s: %w", newAgents[index].ID, err,
+				)
+			}
+
+			mu.Lock()
+			newAgents[index].CapitalHandle = handle
+			newAgents[index].FundedCash = cash.TradingCash
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return err
 	}
 
 	client.logger.Info(

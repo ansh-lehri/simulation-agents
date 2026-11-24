@@ -1,5 +1,7 @@
 package scenario
 
+import "simulation-agents/orchestrator/generator"
+
 // Disposition component names. The disposition simplex has three
 // slots — trend, mean-reversion, and noise — and a scenario names
 // the one to shift mass toward and the one to shift mass away from
@@ -84,19 +86,26 @@ type MetricTarget struct {
 }
 
 // ScenarioBlob is the full description of one named scenario — its
-// per-knob direction, its intensity, its switches, and its target
-// metric. Everything downstream reads this struct and nothing else.
+// per-knob direction, its intensity, its switches, its target metric,
+// and its direct session-level overrides. Everything downstream reads
+// this struct and nothing else.
 //
 // Direction holds scalar-knob arrows only; DispositionDirection
 // holds the one vector-valued disposition arrow (or nil, meaning no
 // disposition shift). Intensity is the single scalar that scales
 // every arrow in the shove.
+//
+// Session carries Bucket-2 overrides (seeder book-structure + ThetaMarket)
+// that are set directly per scenario — no ruler math, no crowd-width
+// scaling. A nil Session means every session-level dial stays at the
+// composition-root default.
 type ScenarioBlob struct {
 	Direction            Direction
 	DispositionDirection *DispositionArrow
 	Intensity            float64
 	Switches             Switches
 	Target               MetricTarget
+	Session              *generator.SessionEffective
 }
 
 // PresenceBaseline carries the four baseline lifecycle-curve rates

@@ -31,7 +31,7 @@ type windDownFixture struct {
 func newWindDownFixture(t *testing.T) *windDownFixture {
 	t.Helper()
 	logger := discardLogger()
-	accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), logger)
+	accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), 1, logger)
 	if err != nil {
 		t.Fatalf("NewAccountOpenClient: %v", err)
 	}
@@ -437,9 +437,10 @@ func (fake *blockingSessionRunner) Run(
 	request transport.BringUpRequest,
 	population generator.Population,
 	curveEffective *generator.CurveEffective,
+	sessionEffective *generator.SessionEffective,
 	lifecycleChannel chan<- session.LifecycleDecision,
 ) {
-	_, _, _ = request, population, curveEffective
+	_, _, _, _ = request, population, curveEffective, sessionEffective
 	fake.ranCount.Add(1)
 	<-ctx.Done()
 	fake.sawCancel.Store(true)

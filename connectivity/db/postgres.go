@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"simulation-agents/connectivity/config"
@@ -28,6 +29,14 @@ func NewPostgres(ctx context.Context, pgCfg config.PostgresConfig) (*pgxpool.Poo
 	if pgCfg.MinConns > 0 {
 		poolCfg.MinConns = pgCfg.MinConns
 	}
+
+	// PgBouncer transaction mode reuses server connections across clients.
+	// pgx's default extended protocol caches prepared statements per-connection
+	// (stmtcache_*); when another client later gets that same server connection,
+	// Postgres rejects the re-prepare with SQLSTATE 42P05. Simple protocol
+	// sends queries as plain text with no prepared statements, eliminating the
+	// conflict entirely.
+	poolCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {

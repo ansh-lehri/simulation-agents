@@ -15,8 +15,9 @@ import (
 // (warn-on-canonical, no-warn-on-on-demand) that was its real target.
 func completeOrchestratorConfig() OrchestratorConfig {
 	return OrchestratorConfig{
-		PopulationSize:  100,
-		LifecycleBuffer: 16,
+		PopulationSize:         100,
+		LifecycleBuffer:        16,
+		AccountOpenConcurrency: 10,
 		CapitalParams: agent.CapitalParams{
 			Floor:             1_000,
 			JitterSpread:      0.1,
@@ -29,6 +30,17 @@ func completeOrchestratorConfig() OrchestratorConfig {
 func TestValidateAcceptsCompleteOrchestratorConfig(t *testing.T) {
 	if err := completeOrchestratorConfig().Validate(); err != nil {
 		t.Fatalf("expected nil, got %v", err)
+	}
+}
+
+func TestValidateRejectsNonPositiveAccountOpenConcurrency(t *testing.T) {
+	for _, c := range []int{0, -1} {
+		config := completeOrchestratorConfig()
+		config.AccountOpenConcurrency = c
+		err := config.Validate()
+		if err == nil || !strings.Contains(err.Error(), "AccountOpenConcurrency") {
+			t.Fatalf("concurrency=%d: expected AccountOpenConcurrency error, got %v", c, err)
+		}
 	}
 }
 

@@ -47,7 +47,7 @@ func TestEffectiveEmptyNameIsIdentity(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&logBuffer, nil))
 	engine := buildEngine(t, logger)
 
-	effective, curve := engine.Effective("US", "")
+	effective, curve, _ := engine.Effective("US", "")
 	if effective != nil {
 		t.Errorf("Effective(\"\") returned non-nil EffectiveParams")
 	}
@@ -91,7 +91,7 @@ func TestEffectiveLogsCountryAndName(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&logBuffer, nil))
 	engine := buildEngine(t, logger)
 
-	_, _ = engine.Effective("JP", ScenarioNameThin)
+	_, _, _ = engine.Effective("JP", ScenarioNameThin)
 
 	logOutput := logBuffer.String()
 	if !strings.Contains(logOutput, "scenario=thin") {
@@ -110,7 +110,7 @@ func TestEffectiveLogsCountryAndName(t *testing.T) {
 func TestEffectiveEveryPresetReturnsNonNil(t *testing.T) {
 	engine := buildEngine(t, nil)
 	for _, scenarioName := range engine.RegistryNames() {
-		effective, curve := engine.Effective("US", scenarioName)
+		effective, curve, _ := engine.Effective("US", scenarioName)
 		if effective == nil {
 			t.Errorf("preset %q returned nil EffectiveParams", scenarioName)
 			continue
@@ -133,8 +133,8 @@ func TestEffectiveEveryPresetReturnsNonNil(t *testing.T) {
 func TestEffectiveIsDeterministic(t *testing.T) {
 	engine := buildEngine(t, nil)
 	for _, scenarioName := range engine.RegistryNames() {
-		firstEffective, firstCurve := engine.Effective("US", scenarioName)
-		secondEffective, secondCurve := engine.Effective("US", scenarioName)
+		firstEffective, firstCurve, _ := engine.Effective("US", scenarioName)
+		secondEffective, secondCurve, _ := engine.Effective("US", scenarioName)
 
 		if !reflect.DeepEqual(firstEffective, secondEffective) {
 			t.Errorf("EffectiveParams drift for %q", scenarioName)
@@ -154,7 +154,7 @@ func TestEffectiveIsDeterministic(t *testing.T) {
 // identity check on the whole pipeline.
 func TestEffectiveNormalPresetMatchesBaseline(t *testing.T) {
 	engine := buildEngine(t, nil)
-	effective, _ := engine.Effective("US", ScenarioNameNormal)
+	effective, _, _ := engine.Effective("US", ScenarioNameNormal)
 	if effective == nil || effective.ShiftedParams == nil {
 		t.Fatalf("normal preset returned nil")
 	}
@@ -174,7 +174,7 @@ func TestEffectiveNormalPresetMatchesBaseline(t *testing.T) {
 // sign reaches the output correctly; the magnitude is calibration.
 func TestEffectiveThinPresetShiftsAggressivenessUp(t *testing.T) {
 	engine := buildEngine(t, nil)
-	effective, _ := engine.Effective("US", ScenarioNameThin)
+	effective, _, _ := engine.Effective("US", ScenarioNameThin)
 	if effective == nil || effective.ShiftedParams == nil {
 		t.Fatalf("thin preset returned nil")
 	}
@@ -192,7 +192,7 @@ func TestEffectiveThinPresetShiftsAggressivenessUp(t *testing.T) {
 // has the right camp means from the preset's slot constants.
 func TestEffectiveDispersionPresetSetsPhiBimodal(t *testing.T) {
 	engine := buildEngine(t, nil)
-	effective, _ := engine.Effective("US", ScenarioNameDispersion)
+	effective, _, _ := engine.Effective("US", ScenarioNameDispersion)
 	if effective == nil || effective.PhiBimodal == nil {
 		t.Fatal("dispersion preset did not populate PhiBimodal")
 	}

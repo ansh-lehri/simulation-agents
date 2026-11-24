@@ -13,8 +13,8 @@ import (
 )
 
 // spyCoreAccountClient satisfies CoreAccountClient and records every
-// call in order so the account-open tests can assert the per-agent
-// loop structure and the (opens-first, then-cash-reads) ordering.
+// call in a thread-safe way so the account-open tests can assert
+// per-agent correctness across concurrent goroutines.
 type spyCoreAccountClient struct {
 	mutex sync.Mutex
 
@@ -46,7 +46,6 @@ func (spy *spyCoreAccountClient) OpenAccount(ctx context.Context, agentUserID st
 	}
 	handle, present := spy.openByAgentUserID[agentUserID]
 	if !present {
-		// Default: a predictable handle derived from the id.
 		handle = "handle-" + agentUserID
 	}
 	return handle, nil
@@ -69,7 +68,10 @@ func (spy *spyCoreAccountClient) GetAccountCash(ctx context.Context, accountID s
 
 func mustBuildAccountOpenClient(t *testing.T, spy *spyCoreAccountClient) *AccountOpenClient {
 	t.Helper()
-	client, err := NewAccountOpenClient(spy, discardLogger())
+	// concurrency=1 gives deterministic serial behaviour in tests that
+	// check call counts and per-agent state; tests that need to exercise
+	// the parallel fan-out use a higher value explicitly.
+	client, err := NewAccountOpenClient(spy, 1, discardLogger())
 	if err != nil {
 		t.Fatalf("NewAccountOpenClient: %v", err)
 	}
@@ -92,11 +94,19 @@ func newTestAgents(count int) []agent.Agent {
 // ---- NewAccountOpenClient -----------------------------------------
 
 func TestNewAccountOpenClientRejectsNilDependencies(t *testing.T) {
-	if _, err := NewAccountOpenClient(nil, discardLogger()); err == nil {
+	if _, err := NewAccountOpenClient(nil, 1, discardLogger()); err == nil {
 		t.Fatalf("expected nil coreClient error, got nil")
 	}
-	if _, err := NewAccountOpenClient(newSpyCoreAccountClient(), nil); err == nil {
+	if _, err := NewAccountOpenClient(newSpyCoreAccountClient(), 1, nil); err == nil {
 		t.Fatalf("expected nil logger error, got nil")
+	}
+}
+
+func TestNewAccountOpenClientRejectsNonPositiveConcurrency(t *testing.T) {
+	for _, c := range []int{0, -1, -100} {
+		if _, err := NewAccountOpenClient(newSpyCoreAccountClient(), c, discardLogger()); err == nil {
+			t.Fatalf("concurrency=%d: expected error, got nil", c)
+		}
 	}
 }
 
@@ -118,7 +128,8 @@ func TestOpenEmptyNewSliceIsNoCoreCall(t *testing.T) {
 	}
 }
 
-func TestOpenCallsOpenAccountThenGetAccountCashInOrder(t *testing.T) {
+func TestOpenCallsOpenAccountAndGetAccountCashPerAgent(t *testing.T) {
+	// concurrency=1 so execution is serial and we can check exact counts.
 	spy := newSpyCoreAccountClient()
 	client := mustBuildAccountOpenClient(t, spy)
 	newAgents := newTestAgents(3)
@@ -126,15 +137,12 @@ func TestOpenCallsOpenAccountThenGetAccountCashInOrder(t *testing.T) {
 	if err := client.Open(context.Background(), newAgents); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	// Opens happen once per agent, in input order.
-	wantOpenCalls := []string{"new-001", "new-002", "new-003"}
-	if !reflectStringSliceEqual(spy.openCalls, wantOpenCalls) {
-		t.Fatalf("open calls = %v, want %v", spy.openCalls, wantOpenCalls)
+	// Every agent must get exactly one open call and one cash call.
+	if len(spy.openCalls) != 3 {
+		t.Fatalf("open calls = %d, want 3: %v", len(spy.openCalls), spy.openCalls)
 	}
-	// Cash reads happen once per handle, in input order, AFTER opens.
-	wantCashCalls := []string{"handle-new-001", "handle-new-002", "handle-new-003"}
-	if !reflectStringSliceEqual(spy.cashCalls, wantCashCalls) {
-		t.Fatalf("cash calls = %v, want %v", spy.cashCalls, wantCashCalls)
+	if len(spy.cashCalls) != 3 {
+		t.Fatalf("cash calls = %d, want 3: %v", len(spy.cashCalls), spy.cashCalls)
 	}
 }
 
@@ -162,6 +170,32 @@ func TestOpenPopulatesHandleAndFundedCashPerAgent(t *testing.T) {
 	}
 }
 
+// TestOpenParallelAllAgentsProcessed verifies that with concurrency > 1
+// every agent still gets its handle and funded cash correctly filled —
+// i.e. no goroutine races on the slice write.
+func TestOpenParallelAllAgentsProcessed(t *testing.T) {
+	const agentCount = 50
+	spy := newSpyCoreAccountClient()
+	client, err := NewAccountOpenClient(spy, 10, discardLogger())
+	if err != nil {
+		t.Fatalf("NewAccountOpenClient: %v", err)
+	}
+	newAgents := newTestAgents(agentCount)
+
+	if err := client.Open(context.Background(), newAgents); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	for i, a := range newAgents {
+		wantHandle := fmt.Sprintf("handle-new-%03d", i+1)
+		if a.CapitalHandle != wantHandle {
+			t.Fatalf("agent %d: handle=%q want=%q", i, a.CapitalHandle, wantHandle)
+		}
+		if a.FundedCash != 50_000 {
+			t.Fatalf("agent %d: funded_cash=%d want 50000", i, a.FundedCash)
+		}
+	}
+}
+
 // ---- Open (failure paths) -----------------------------------------
 
 func TestOpenSurfacesOpenAccountError(t *testing.T) {
@@ -174,23 +208,6 @@ func TestOpenSurfacesOpenAccountError(t *testing.T) {
 	err := client.Open(context.Background(), newAgents)
 	if err == nil || !errors.Is(err, openErr) {
 		t.Fatalf("expected wrapped OpenAccount error, got %v", err)
-	}
-	// The pass stopped at the failing agent — no further opens, no
-	// cash reads at all.
-	if len(spy.openCalls) != 2 {
-		t.Fatalf("expected 2 open attempts before failure, got %d: %v", len(spy.openCalls), spy.openCalls)
-	}
-	if len(spy.cashCalls) != 0 {
-		t.Fatalf("expected zero cash reads on open failure, got %v", spy.cashCalls)
-	}
-	// Agent 0 still has its handle set (the open before the failing
-	// one succeeded); agent 1 and 2 do not.
-	if newAgents[0].CapitalHandle == "" {
-		t.Fatalf("agent 0 missing handle after a later open failure")
-	}
-	if newAgents[1].CapitalHandle != "" || newAgents[2].CapitalHandle != "" {
-		t.Fatalf("agents past the failing index carry a handle: %q %q",
-			newAgents[1].CapitalHandle, newAgents[2].CapitalHandle)
 	}
 }
 
@@ -205,31 +222,14 @@ func TestOpenSurfacesGetAccountCashError(t *testing.T) {
 	if err == nil || !errors.Is(err, cashErr) {
 		t.Fatalf("expected wrapped GetAccountCash error, got %v", err)
 	}
-	// All three opens succeeded before the cash reads began.
-	if len(spy.openCalls) != 3 {
-		t.Fatalf("expected 3 opens before cash reads, got %d", len(spy.openCalls))
-	}
-	// Cash loop stopped at the failing index: calls for 1 and 2, not 3.
-	if len(spy.cashCalls) != 2 {
-		t.Fatalf("expected 2 cash reads before failure, got %d: %v", len(spy.cashCalls), spy.cashCalls)
-	}
-	// Agents past the failing cash read keep handle but no FundedCash.
-	if newAgents[2].CapitalHandle == "" {
-		t.Fatalf("agent 2 missing handle after a cash read failure")
-	}
-	if newAgents[2].FundedCash != 0 {
-		t.Fatalf("agent 2 carries FundedCash after a cash read failure: %d", newAgents[2].FundedCash)
-	}
 }
 
 // ---- Idempotency contract -----------------------------------------
 
 func TestOpenReSendRetriesOpenAccountSafely(t *testing.T) {
 	// Core's OpenAccount is get-or-create keyed on the agent id, so the
-	// same id resolved twice returns the same handle. This test models
-	// a retried bring-up: the second Open over the same agents must
-	// end in the same state as the first — no duplicate account
-	// confusion visible from this side.
+	// same id resolved twice returns the same handle. A retried bring-up
+	// must end in the same state as the first run.
 	spy := newSpyCoreAccountClient()
 	client := mustBuildAccountOpenClient(t, spy)
 	newAgents := newTestAgents(2)
@@ -239,8 +239,6 @@ func TestOpenReSendRetriesOpenAccountSafely(t *testing.T) {
 	}
 	firstHandles := []string{newAgents[0].CapitalHandle, newAgents[1].CapitalHandle}
 
-	// Reset FundedCash/CapitalHandle to zero to simulate a fresh retry
-	// where the in-memory state was discarded.
 	for index := range newAgents {
 		newAgents[index].CapitalHandle = ""
 		newAgents[index].FundedCash = 0
@@ -258,25 +256,12 @@ func TestOpenReSendRetriesOpenAccountSafely(t *testing.T) {
 
 // ---- helpers ------------------------------------------------------
 
-func reflectStringSliceEqual(got, want []string) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for index := range got {
-		if got[index] != want[index] {
-			return false
-		}
-	}
-	return true
-}
-
 // Compile-time assertion that *core.Client satisfies the orchestrator's
 // narrow interface. If a future Core refactor changes OpenAccount or
 // GetAccountCash signatures, this fails at build time rather than at
 // first bring-up.
 var _ CoreAccountClient = (*core.Client)(nil)
 
-// Keep strings and sync usage non-trivial so vet doesn't flag them when
-// a future edit removes a test row — currently used above.
+// Keep strings and sync usage non-trivial so vet doesn't flag them.
 var _ = strings.TrimSpace
 var _ sync.Mutex

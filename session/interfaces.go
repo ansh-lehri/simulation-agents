@@ -164,6 +164,7 @@ type Scheduler interface {
 		request transport.BringUpRequest,
 		population generator.Population,
 		curveEffective *generator.CurveEffective,
+		sessionEffective *generator.SessionEffective,
 		lifecycleChannel chan<- LifecycleDecision,
 	)
 }

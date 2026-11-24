@@ -58,7 +58,7 @@ func defaultGenParams() generator.GenParams {
 		// qty>=1 at realistic conviction). This value is unrelated to
 		// instrument price scale, which is fixed — it only resizes the
 		// capital distribution to be workable against it.
-		CapitalSizeLogNormal: generator.LogNormalPair{Mu: 13, Sigma: 1},
+		CapitalSizeLogNormal: generator.LogNormalPair{Mu: 16, Sigma: 1},
 
 		DispositionDirichletAlphas:  generator.DispositionAlphas{Trend: 1, MeanReversion: 1, Noise: 1},
 		DietOptionalFlagProbability: 0.5,
@@ -215,6 +215,13 @@ func defaultOrchestratorConfig() orchestrator.OrchestratorConfig {
 	return orchestrator.OrchestratorConfig{
 		PopulationSize:  1000,
 		LifecycleBuffer: 64,
+		// AccountOpenConcurrency=5: the broker's store pool (StoreMaxConns=8)
+		// is shared between account-open upserts and concurrent candle reads
+		// from live sessions. Capping at 5 leaves 3 connections free for
+		// candle reads at all times, preventing context-deadline starvation.
+		// 1000 agents open in ≈200 waves × ~300ms ≈ 60s — slow but within
+		// BringUpTimeout and reliable.
+		AccountOpenConcurrency: 5,
 		CapitalParams: agent.CapitalParams{
 			Floor:        1_000,
 			JitterSpread: 0.1,
@@ -226,7 +233,7 @@ func defaultOrchestratorConfig() orchestrator.OrchestratorConfig {
 			// matters for on-demand existing (leased) agents or a
 			// non-positive funded_cash read; today's population is
 			// all-new, so this isn't the active ceiling yet.
-			DefaultFundedCash: 1000_000,
+			DefaultFundedCash: 10_000_000,
 		},
 	}
 }

@@ -51,9 +51,9 @@ type seedLevel struct {
 func (runner *Runner) runLiquiditySeeder(
 	ctx context.Context,
 	request transport.BringUpRequest,
+	params LiquiditySeederParams,
 	rng *rand.Rand,
 ) {
-	params := runner.dependencies.Params.LiquiditySeeder
 	if params.SellerCount <= 0 && params.BuyerCount <= 0 {
 		return
 	}
@@ -311,9 +311,9 @@ func identitySideLabel(side seederSide) string {
 // decide() path does: CurrentPrice decides whether there is any
 // usable price at all (live quote, else candle fallback), and Candles
 // supplies the latest bar's H/L/C for the floor-trader pivot formula.
-// Returns nil when there is truly no data yet (cold canonical genesis
-// with no reference price plumbed through the bring-up request yet —
-// on-demand never hits this, it always has canonical history to pull).
+// When no price data exists at all (cold start — instrument never
+// tape-learned, no history, no live quote), falls back to
+// params.GenesisReferencePrice if non-zero; returns nil otherwise.
 func (runner *Runner) computeSeedLevelsForInstrument(
 	ctx context.Context,
 	request transport.BringUpRequest,
@@ -338,7 +338,10 @@ func (runner *Runner) computeSeedLevelsForInstrument(
 
 	anchorClose, priceOK := acc.CurrentPrice(instrument, timeframe)
 	if !priceOK {
-		return nil
+		if params.GenesisReferencePrice <= 0 {
+			return nil
+		}
+		return genesisLevels(params.GenesisReferencePrice, params, rng)
 	}
 
 	bars := acc.Candles(instrument, timeframe)
@@ -350,6 +353,28 @@ func (runner *Runner) computeSeedLevelsForInstrument(
 	}
 	latestBar := bars[len(bars)-1]
 	return pivotLevels(latestBar.High, latestBar.Low, anchorClose, params, rng)
+}
+
+// genesisLevels scatters RandomLevelCount levels within
+// ±GenesisOffsetBps of anchor. Used on cold start when no candle
+// history and no live quote exist — GenesisOffsetBps is deliberately
+// wider than RandomLevelSpreadBps to seed a meaningful two-sided book
+// without any prior price signal.
+func genesisLevels(anchor int64, params LiquiditySeederParams, rng *rand.Rand) []seedLevel {
+	spread := anchor * params.GenesisOffsetBps / 10_000
+	if spread <= 0 {
+		spread = 1
+	}
+	levels := make([]seedLevel, 0, params.RandomLevelCount)
+	for i := 0; i < params.RandomLevelCount; i++ {
+		offset := int64((rng.Float64()*2 - 1) * float64(spread))
+		side := core.OrderSideSell
+		if offset < 0 {
+			side = core.OrderSideBuy
+		}
+		levels = append(levels, seedLevel{side: side, price: anchor + offset})
+	}
+	return levels
 }
 
 // pivotLevels computes the classic floor-trader pivot set (up to

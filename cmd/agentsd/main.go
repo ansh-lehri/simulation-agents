@@ -54,6 +54,13 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("agentsd: load connectivity config: %w", err)
 	}
+	// Both this process and the market-simulator share the same Supabase
+	// session-mode pooler (pool_size=15). Budget: broker(7)+conductor(3)+
+	// agents(4)=14. When PG_MAX_CONNS is unset, pgxpool defaults to
+	// max(4,NumCPU) which can exceed our share on multi-core hosts.
+	if connectivityConfig.Postgres.MaxConns == 0 {
+		connectivityConfig.Postgres.MaxConns = 4
+	}
 
 	coreClientConfig, err := loadCoreClientConfig()
 	if err != nil {
@@ -145,15 +152,15 @@ func run(logger *slog.Logger) error {
 	// account-open client runs the per-agent OpenAccount + GetAccountCash
 	// pass; the capital resolver runs the three-case dispatch over the
 	// in-flight population after the handles are back.
-	accountOpenClient, err := orchestrator.NewAccountOpenClient(coreClient, logger)
-	if err != nil {
-		return fmt.Errorf("agentsd: build account-open client: %w", err)
-	}
 	orchestratorConfig := defaultOrchestratorConfig()
 	// Hand the loaded registry's names into the orchestrator so its
 	// intake rejects any BringUp whose scenario field is non-empty
 	// and not one of the registered names.
 	orchestratorConfig.ValidScenarioNames = scenarioEngine.RegistryNames()
+	accountOpenClient, err := orchestrator.NewAccountOpenClient(coreClient, orchestratorConfig.AccountOpenConcurrency, logger)
+	if err != nil {
+		return fmt.Errorf("agentsd: build account-open client: %w", err)
+	}
 	capitalResolver, err := orchestrator.NewCapitalResolver(orchestratorConfig.CapitalParams, logger)
 	if err != nil {
 		return fmt.Errorf("agentsd: build capital resolver: %w", err)

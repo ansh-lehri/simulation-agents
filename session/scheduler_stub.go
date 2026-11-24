@@ -43,10 +43,12 @@ func (scheduler *NoOpScheduler) StartScheduler(
 	request transport.BringUpRequest,
 	population generator.Population,
 	curveEffective *generator.CurveEffective,
+	sessionEffective *generator.SessionEffective,
 	lifecycleChannel chan<- LifecycleDecision,
 ) {
 	_ = ctx
 	_ = curveEffective
+	_ = sessionEffective
 	_ = lifecycleChannel
 	scheduler.logger.Info(
 		"scheduler stub reached (next phase replaces body)",

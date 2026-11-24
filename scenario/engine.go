@@ -80,9 +80,9 @@ func NewEngine(
 func (engine *ScenarioEngine) Effective(
 	country string,
 	scenarioName string,
-) (*generator.EffectiveParams, *generator.CurveEffective) {
+) (*generator.EffectiveParams, *generator.CurveEffective, *generator.SessionEffective) {
 	if scenarioName == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if !engine.registry.Has(scenarioName) {
 		panic(fmt.Sprintf(
@@ -102,7 +102,7 @@ func (engine *ScenarioEngine) Effective(
 	scalarUEff, dispositionUEff := engine.shove(blob)
 	effective := engine.invert(scalarUEff, dispositionUEff, blob)
 	curve := engine.curveFrom(scalarUEff)
-	return effective, curve
+	return effective, curve, blob.Session
 }
 
 // RegistryNames exposes the registered scenario names in sorted

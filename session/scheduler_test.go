@@ -381,7 +381,7 @@ func TestStartScheduler_CanonicalEmitsCloseEffectsAfterRunLoopExits(t *testing.T
 	population := makeOrderedPopulation(3, 0)
 	lifecycleChannel := make(chan LifecycleDecision, len(population.All()))
 
-	sched.StartScheduler(context.Background(), canonicalBringUpRequest(), population, nil, lifecycleChannel)
+	sched.StartScheduler(context.Background(), canonicalBringUpRequest(), population, nil, nil, lifecycleChannel)
 	close(lifecycleChannel)
 
 	var decisions []LifecycleDecision
@@ -403,7 +403,7 @@ func TestStartScheduler_OnDemandEmitsNoCloseEffects(t *testing.T) {
 	population := makeOrderedPopulation(2, 0)
 	lifecycleChannel := make(chan LifecycleDecision, len(population.All()))
 
-	sched.StartScheduler(context.Background(), onDemandBringUpRequest(), population, nil, lifecycleChannel)
+	sched.StartScheduler(context.Background(), onDemandBringUpRequest(), population, nil, nil, lifecycleChannel)
 	close(lifecycleChannel)
 
 	decisionCount := 0

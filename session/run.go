@@ -106,6 +106,7 @@ func (runner *Runner) Run(
 	request transport.BringUpRequest,
 	population generator.Population,
 	curveEffective *generator.CurveEffective,
+	sessionEffective *generator.SessionEffective,
 	lifecycleChannel chan<- LifecycleDecision,
 ) {
 	runner.dependencies.Logger.Info(
@@ -149,8 +150,33 @@ func (runner *Runner) Run(
 	// (4.5) liquidity seeder — independent goroutine, bound to Run's own
 	// long-lived ctx (not groupCtx above, which dies at the join) so it
 	// keeps working the book for the whole session. No-op if both
-	// LiquiditySeeder counts are zero.
-	go runner.runLiquiditySeeder(ctx, request, runner.dependencies.RNGSource.Fresh())
+	// LiquiditySeeder counts are zero. Scenario overrides are applied
+	// to a copy of the global params so the runner's state is not mutated.
+	seederParams := runner.dependencies.Params.LiquiditySeeder
+	if sessionEffective != nil {
+		if sessionEffective.SellerCount > 0 {
+			seederParams.SellerCount = sessionEffective.SellerCount
+		}
+		if sessionEffective.BuyerCount > 0 {
+			seederParams.BuyerCount = sessionEffective.BuyerCount
+		}
+		if sessionEffective.OrderSizeMin > 0 {
+			seederParams.OrderSizeMin = sessionEffective.OrderSizeMin
+		}
+		if sessionEffective.OrderSizeMax > 0 {
+			seederParams.OrderSizeMax = sessionEffective.OrderSizeMax
+		}
+		if sessionEffective.RandomLevelSpreadBps > 0 {
+			seederParams.RandomLevelSpreadBps = sessionEffective.RandomLevelSpreadBps
+		}
+		if sessionEffective.PivotLevelCount > 0 {
+			seederParams.PivotLevelCount = sessionEffective.PivotLevelCount
+		}
+		if sessionEffective.ContinuousFraction > 0 {
+			seederParams.ContinuousFraction = sessionEffective.ContinuousFraction
+		}
+	}
+	go runner.runLiquiditySeeder(ctx, request, seederParams, runner.dependencies.RNGSource.Fresh())
 
 	// (5) go-live wait
 	if waitErr := runner.dependencies.Clock.WaitUntil(ctx, request.SessionStart); waitErr != nil {
@@ -160,7 +186,7 @@ func (runner *Runner) Run(
 
 	// (6) scheduler handoff; real tick loop body replaces the stub
 	// without any change here.
-	runner.dependencies.Scheduler.StartScheduler(ctx, request, population, curveEffective, lifecycleChannel)
+	runner.dependencies.Scheduler.StartScheduler(ctx, request, population, curveEffective, sessionEffective, lifecycleChannel)
 
 	// (7) ready
 	runner.dependencies.Failure.ReportReady(request)

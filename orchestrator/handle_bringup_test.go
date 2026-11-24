@@ -152,7 +152,7 @@ func newSpineHarness(t *testing.T) *spineHarness {
 
 	fakeGen := &fakePopulationGenerator{}
 	spy := newRecordingCoreAccountClient()
-	accountOpen, err := NewAccountOpenClient(spy, logger)
+	accountOpen, err := NewAccountOpenClient(spy, 1, logger)
 	if err != nil {
 		t.Fatalf("NewAccountOpenClient: %v", err)
 	}
@@ -286,15 +286,31 @@ func TestSpineRunsStagesInABCOrder(t *testing.T) {
 	if len(harness.fakeGenerator.callOrder) != 1 {
 		t.Fatalf("generator called %d times, want 1", len(harness.fakeGenerator.callOrder))
 	}
-	// Stage B: account-open ran once per new agent, in order.
-	wantOpens := []string{"new-001", "new-002", "new-003", "new-004"}
-	if !reflect.DeepEqual(harness.recordingCore.openCalls, wantOpens) {
-		t.Fatalf("open calls = %v, want %v", harness.recordingCore.openCalls, wantOpens)
+	// Stage B: account-open ran once per new agent (parallel, so order
+	// is not guaranteed — check presence, not sequence).
+	wantOpens := map[string]bool{"new-001": true, "new-002": true, "new-003": true, "new-004": true}
+	if len(harness.recordingCore.openCalls) != len(wantOpens) {
+		t.Fatalf("open calls count = %d, want %d: %v",
+			len(harness.recordingCore.openCalls), len(wantOpens), harness.recordingCore.openCalls)
 	}
-	// Stage B cash reads happen after every open, over each handle.
-	wantCash := []string{"handle-new-001", "handle-new-002", "handle-new-003", "handle-new-004"}
-	if !reflect.DeepEqual(harness.recordingCore.cashCalls, wantCash) {
-		t.Fatalf("cash calls = %v, want %v", harness.recordingCore.cashCalls, wantCash)
+	for _, id := range harness.recordingCore.openCalls {
+		if !wantOpens[id] {
+			t.Fatalf("unexpected open call for %q: %v", id, harness.recordingCore.openCalls)
+		}
+	}
+	// Stage B cash reads: one per handle (parallel, order not guaranteed).
+	wantCash := map[string]bool{
+		"handle-new-001": true, "handle-new-002": true,
+		"handle-new-003": true, "handle-new-004": true,
+	}
+	if len(harness.recordingCore.cashCalls) != len(wantCash) {
+		t.Fatalf("cash calls count = %d, want %d: %v",
+			len(harness.recordingCore.cashCalls), len(wantCash), harness.recordingCore.cashCalls)
+	}
+	for _, id := range harness.recordingCore.cashCalls {
+		if !wantCash[id] {
+			t.Fatalf("unexpected cash call for %q: %v", id, harness.recordingCore.cashCalls)
+		}
 	}
 }
 
@@ -376,7 +392,7 @@ func TestSpineSurfacesAccountOpenError(t *testing.T) {
 	// errors. The generator still succeeds so Stage A completes; Stage
 	// B fails and surfaces up.
 	erroringCore := &erroringCoreOpen{errorToReturn: errors.New("core 503")}
-	accountOpen, err := NewAccountOpenClient(erroringCore, discardLogger())
+	accountOpen, err := NewAccountOpenClient(erroringCore, 1, discardLogger())
 	if err != nil {
 		t.Fatalf("NewAccountOpenClient: %v", err)
 	}
@@ -427,7 +443,7 @@ func TestSpineIsDeterministicUnderFixedSeed(t *testing.T) {
 	// is exercised.
 	build := func() *Orchestrator {
 		testGenerator := buildTestGenerator(t)
-		accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), discardLogger())
+		accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), 1, discardLogger())
 		if err != nil {
 			t.Fatalf("NewAccountOpenClient: %v", err)
 		}

@@ -286,9 +286,10 @@ func (stubScheduler) StartScheduler(
 	request transport.BringUpRequest,
 	population generator.Population,
 	curveEffective *generator.CurveEffective,
+	sessionEffective *generator.SessionEffective,
 	lifecycleChannel chan<- LifecycleDecision,
 ) {
-	_, _, _, _, _ = ctx, request, population, curveEffective, lifecycleChannel
+	_, _, _, _, _, _ = ctx, request, population, curveEffective, sessionEffective, lifecycleChannel
 }
 
 type stubFailureReporter struct{}

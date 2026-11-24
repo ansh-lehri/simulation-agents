@@ -82,6 +82,12 @@ func defaultSessionParams(brokerDefaultFundedCash int64) session.Params {
 			ReentryCadenceMin:    5 * time.Second,
 			ReentryCadenceMax:    15 * time.Second,
 			GenesisOffsetBps:     100,
+			// GenesisReferencePrice is SYNTH_DEF's observed price scale
+			// (~49k ticks/unit). Used as the anchor for the first round
+			// of seeder orders on a cold start (no canonical history, no
+			// live quote yet). Tape-learns the instrument so WS
+			// subscriptions resolve and agents can begin trading.
+			GenesisReferencePrice: 49_000,
 		},
 		// ExpectedQuitsPerSession is the canonical quit-for-good
 		// baseline from the lifecycle design (~one quitter every
