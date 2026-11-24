@@ -353,7 +353,7 @@ func newTailFixtureWithRNG(t *testing.T, rngSource RNGSource) *tailFixture {
 	t.Helper()
 	logger := discardLogger()
 
-	accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), logger)
+	accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), 1, logger)
 	if err != nil {
 		t.Fatalf("NewAccountOpenClient: %v", err)
 	}
