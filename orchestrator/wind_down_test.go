@@ -31,7 +31,7 @@ type windDownFixture struct {
 func newWindDownFixture(t *testing.T) *windDownFixture {
 	t.Helper()
 	logger := discardLogger()
-	accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), logger)
+	accountOpen, err := NewAccountOpenClient(newSpyCoreAccountClient(), 1, logger)
 	if err != nil {
 		t.Fatalf("NewAccountOpenClient: %v", err)
 	}
