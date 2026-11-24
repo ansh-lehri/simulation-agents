@@ -54,6 +54,13 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("agentsd: load connectivity config: %w", err)
 	}
+	// Both this process and the market-simulator share the same Supabase
+	// session-mode pooler (pool_size=15). Budget: broker(7)+conductor(3)+
+	// agents(4)=14. When PG_MAX_CONNS is unset, pgxpool defaults to
+	// max(4,NumCPU) which can exceed our share on multi-core hosts.
+	if connectivityConfig.Postgres.MaxConns == 0 {
+		connectivityConfig.Postgres.MaxConns = 4
+	}
 
 	coreClientConfig, err := loadCoreClientConfig()
 	if err != nil {
