@@ -94,6 +94,15 @@ func normalPreset() ScenarioBlob {
 	return ScenarioBlob{
 		Direction: Direction{},
 		Intensity: intensityNormalSlot,
+		Session: &generator.SessionEffective{
+			SellerCount:          15,
+			BuyerCount:           15,
+			OrderSizeMin:         5,
+			OrderSizeMax:         20,
+			RandomLevelSpreadBps: 7,
+			ThetaMarket:          0.62,
+			ContinuousFraction:   0.82,
+		},
 		// Session nil: normal uses the composition-root defaults unchanged.
 	}
 }
@@ -135,13 +144,14 @@ func thinPreset() ScenarioBlob {
 		// All values are starting-point calibration placeholders; tune until
 		// median spread reaches the target multiple above baseline.
 		Session: &generator.SessionEffective{
-			SellerCount:          18,
-			BuyerCount:           12,
+			SellerCount:          15,
+			BuyerCount:           15,
 			OrderSizeMin:         5,
-			OrderSizeMax:         80,
-			RandomLevelSpreadBps: 30,
-			ContinuousFraction:   0.85,
-			ThetaMarket:          0.55,
+			OrderSizeMax:         50,
+			RandomLevelSpreadBps: 12,
+			ContinuousFraction:   0.60,
+			ThetaMarket:          0.62,
+			PivotLevelCount:      0,
 		},
 	}
 }
@@ -182,12 +192,14 @@ func calmPreset() ScenarioBlob {
 		// All values are starting-point calibration placeholders; tune until
 		// price range width reaches the target fraction of baseline.
 		Session: &generator.SessionEffective{
-			SellerCount:          50,
-			BuyerCount:           45,
-			OrderSizeMin:         15,
-			OrderSizeMax:         150,
-			RandomLevelSpreadBps: 3,
-			ThetaMarket:          0.85,
+			SellerCount:          12,
+			BuyerCount:           12,
+			OrderSizeMin:         5,
+			OrderSizeMax:         20,
+			RandomLevelSpreadBps: 5,
+			ThetaMarket:          0.65,
+			ContinuousFraction:   0.92,
+			PivotLevelCount:      0,
 		},
 	}
 }
@@ -221,12 +233,13 @@ func busyPreset() ScenarioBlob {
 		// All values are starting-point calibration placeholders; tune until
 		// trades-per-minute reaches the target multiple above baseline.
 		Session: &generator.SessionEffective{
-			SellerCount:          45,
-			BuyerCount:           40,
+			SellerCount:          15,
+			BuyerCount:           15,
 			OrderSizeMin:         5,
-			OrderSizeMax:         300,
-			RandomLevelSpreadBps: 8,
-			ThetaMarket:          0.40,
+			OrderSizeMax:         20,
+			RandomLevelSpreadBps: 10,
+			ThetaMarket:          0.58,
+			ContinuousFraction:   0.85,
 		},
 	}
 }
